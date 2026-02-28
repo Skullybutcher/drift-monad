@@ -54,12 +54,12 @@ export default function LobbyPage() {
     async function setup() {
       if (wallets.length === 0) return;
       console.log("Lobby wallets:", wallets.map(w => ({ type: w.walletClientType, connector: w.connectorType, addr: w.address })));
-      // Prefer embedded wallet — auto-signs without approval popups
+      // Use external wallet if connected, otherwise embedded
       const wallet =
         wallets.find(
           (w) =>
-            w.walletClientType === "privy" ||
-            w.connectorType === "embedded"
+            w.walletClientType !== "privy" &&
+            w.connectorType !== "embedded"
         ) ?? wallets[0];
       try {
         await wallet.switchChain(10143);

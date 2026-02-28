@@ -47,7 +47,7 @@ function PlayPage() {
         }))
       );
 
-      // Prefer embedded wallet — it auto-signs transactions (no approval popups)
+      // Prefer embedded wallet on play page — auto-signs every touch without popups
       const wallet =
         wallets.find(
           (w) =>
