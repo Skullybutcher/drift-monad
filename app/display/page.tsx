@@ -17,7 +17,7 @@ import {
   NFT_CONTRACT_ADDRESS,
 } from "@/lib/contract";
 
-type RecapState = "idle" | "loading" | "playing" | "empty";
+type RecapState = "idle" | "playing" | "empty";
 
 function DisplayPage() {
   const searchParams = useSearchParams();
@@ -29,6 +29,8 @@ function DisplayPage() {
   const audioRef = useRef<DriftAudioEngine | null>(null);
   const visualRef = useRef<DriftVisualEngine | null>(null);
   const listenerRef = useRef<DriftEventListener | null>(null);
+  // Collect all notes as they arrive live — used for recap
+  const collectedNotesRef = useRef<NoteEvent[]>([]);
 
   // Wallet + NFT state
   const { authenticated, login } = usePrivy();
@@ -114,7 +116,7 @@ function DisplayPage() {
     }
   }, [displayWallet, sessionId]);
 
-  // Recap state
+  // Recap state — replays notes collected in memory, no chain re-fetch
   const [recapState, setRecapState] = useState<RecapState>("idle");
   const [recapProgress, setRecapProgress] = useState({ current: 0, total: 0 });
   const recapAbortRef = useRef<AbortController | null>(null);
@@ -126,92 +128,69 @@ function DisplayPage() {
     setRecapProgress({ current: 0, total: 0 });
   }, []);
 
-  const playRecapSequence = useCallback(
-    async (events: NoteEvent[], signal: AbortSignal) => {
-      const audio = audioRef.current;
-      const visual = visualRef.current;
-      if (!audio || !visual || events.length === 0) return;
-
-      const NOTE_GAP_MS = 300;
-
-      // Loop forever until aborted
-      while (!signal.aborted) {
-        for (let i = 0; i < events.length; i++) {
-          if (signal.aborted) return;
-          audio.playNote(events[i]);
-          visual.createRipple(events[i]);
-          setRecapProgress({ current: i + 1, total: events.length });
-          // Wait between notes
-          await new Promise<void>((resolve) => {
-            const timer = setTimeout(resolve, NOTE_GAP_MS);
-            signal.addEventListener("abort", () => { clearTimeout(timer); resolve(); }, { once: true });
-          });
-        }
-        // Pause between loops
-        if (!signal.aborted) {
-          await new Promise<void>((resolve) => {
-            const timer = setTimeout(resolve, 2000);
-            signal.addEventListener("abort", () => { clearTimeout(timer); resolve(); }, { once: true });
-          });
-        }
-      }
-    },
-    []
-  );
-
-  const startLiveListening = useCallback((sid: number) => {
-    const listener = listenerRef.current;
-    if (!listener) return;
-    listener.startListening(sid, (note: NoteEvent) => {
-      audioRef.current?.playNote(note);
-      visualRef.current?.createRipple(note);
-      setStats((prev) => ({
-        notes: note.totalNotes,
-        players: prev.players,
-        block: note.blockNum,
-      }));
-    });
-  }, []);
-
   const handleRecap = useCallback(async () => {
     if (!sessionId) return;
     const sid = Number(sessionId);
 
+    // Stop recap if already playing
     if (recapState === "playing") {
       stopRecap();
-      startLiveListening(sid);
+      // Resume live listening
+      listenerRef.current?.startListening(sid, (note: NoteEvent) => {
+        collectedNotesRef.current.push(note);
+        audioRef.current?.playNote(note);
+        visualRef.current?.createRipple(note);
+        setStats((prev) => ({
+          notes: note.totalNotes,
+          players: prev.players,
+          block: note.blockNum,
+        }));
+      });
       return;
     }
 
-    setRecapState("loading");
+    // Get notes from memory
+    const notes = [...collectedNotesRef.current];
+    if (notes.length === 0) {
+      setRecapState("empty");
+      setTimeout(() => setRecapState("idle"), 2000);
+      return;
+    }
+
+    // Stop live listening during recap
     listenerRef.current?.stopListening();
 
-    try {
-      const listener = listenerRef.current ?? new DriftEventListener();
-      const events = await listener.fetchAllEvents(sid);
+    const abort = new AbortController();
+    recapAbortRef.current = abort;
+    setRecapState("playing");
+    setRecapProgress({ current: 0, total: notes.length });
 
-      console.log("[Recap] Got", events.length, "events to replay");
+    const NOTE_GAP_MS = 300;
+    const audio = audioRef.current;
+    const visual = visualRef.current;
+    if (!audio || !visual) return;
 
-      if (events.length === 0) {
-        setRecapState("empty");
-        setTimeout(() => {
-          setRecapState("idle");
-          startLiveListening(sid);
-        }, 3000);
-        return;
+    // Play notes sequentially in a loop
+    while (!abort.signal.aborted) {
+      for (let i = 0; i < notes.length; i++) {
+        if (abort.signal.aborted) return;
+        audio.playNote(notes[i]);
+        visual.createRipple(notes[i]);
+        setRecapProgress({ current: i + 1, total: notes.length });
+        await new Promise<void>((resolve) => {
+          const t = setTimeout(resolve, NOTE_GAP_MS);
+          abort.signal.addEventListener("abort", () => { clearTimeout(t); resolve(); }, { once: true });
+        });
       }
-
-      const abort = new AbortController();
-      recapAbortRef.current = abort;
-      setRecapState("playing");
-      setRecapProgress({ current: 0, total: events.length });
-      playRecapSequence(events, abort.signal);
-    } catch (err) {
-      console.error("Recap failed:", err);
-      setRecapState("idle");
-      startLiveListening(sid);
+      // Pause between loops
+      if (!abort.signal.aborted) {
+        await new Promise<void>((resolve) => {
+          const t = setTimeout(resolve, 2000);
+          abort.signal.addEventListener("abort", () => { clearTimeout(t); resolve(); }, { once: true });
+        });
+      }
     }
-  }, [recapState, sessionId, stopRecap, playRecapSequence, startLiveListening]);
+  }, [recapState, sessionId, stopRecap]);
 
   const handleStart = useCallback(async () => {
     if (!canvasRef.current || !sessionId) return;
@@ -228,6 +207,7 @@ function DisplayPage() {
 
     const listener = new DriftEventListener();
     listener.startListening(sid, (note: NoteEvent) => {
+      collectedNotesRef.current.push(note);
       audio.playNote(note);
       visual.createRipple(note);
       setStats((prev) => ({
@@ -359,20 +339,16 @@ function DisplayPage() {
           {/* Recap button */}
           <button
             onClick={handleRecap}
-            disabled={recapState === "loading" || recapState === "empty"}
+            disabled={recapState === "empty"}
             className={`px-5 py-2.5 rounded-lg font-mono text-sm tracking-wider transition-all border ${
               recapState === "playing"
                 ? "bg-amber-500/20 border-amber-500/40 text-amber-300 hover:bg-amber-500/30"
-                : recapState === "loading"
-                ? "bg-white/5 border-white/10 text-white/30 cursor-wait"
                 : recapState === "empty"
                 ? "bg-red-500/10 border-red-500/30 text-red-300/60"
                 : "bg-white/10 border-white/20 text-white/60 hover:bg-white/20 hover:text-white/80"
             }`}
           >
-            {recapState === "loading"
-              ? "loading..."
-              : recapState === "playing"
+            {recapState === "playing"
               ? "stop recap"
               : recapState === "empty"
               ? "no notes yet"
