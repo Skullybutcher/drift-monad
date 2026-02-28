@@ -6,7 +6,7 @@ import { DriftVisualEngine } from "@/lib/visualEngine";
 import { DriftEventListener, type NoteEvent } from "@/lib/eventListener";
 import { getPublicClient, DRIFT_ABI, CONTRACT_ADDRESS } from "@/lib/contract";
 
-type RecapState = "idle" | "loading" | "playing";
+type RecapState = "idle" | "loading" | "playing" | "empty";
 
 export default function DisplayPage() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -122,17 +122,21 @@ export default function DisplayPage() {
       const events = await listener.fetchAllEvents();
 
       if (events.length === 0) {
-        setRecapState("idle");
-        // Resume live
-        listenerRef.current?.startListening((note: NoteEvent) => {
-          audioRef.current?.playNote(note);
-          visualRef.current?.createRipple(note);
-          setStats((prev) => ({
-            notes: note.totalNotes,
-            players: prev.players,
-            block: note.blockNum,
-          }));
-        });
+        console.log("[Recap] No events found on-chain");
+        setRecapState("empty");
+        // Show "no events" briefly then go back to idle and resume live
+        setTimeout(() => {
+          setRecapState("idle");
+          listenerRef.current?.startListening((note: NoteEvent) => {
+            audioRef.current?.playNote(note);
+            visualRef.current?.createRipple(note);
+            setStats((prev) => ({
+              notes: note.totalNotes,
+              players: prev.players,
+              block: note.blockNum,
+            }));
+          });
+        }, 3000);
         return;
       }
 
@@ -223,10 +227,10 @@ export default function DisplayPage() {
 
   return (
     <div className="relative w-screen h-screen overflow-hidden bg-black">
-      {/* Three.js canvas */}
+      {/* Three.js canvas — pointer-events-none so HUD buttons stay clickable */}
       <canvas
         ref={canvasRef}
-        className="absolute inset-0 w-full h-full"
+        className="absolute inset-0 w-full h-full pointer-events-none"
         style={{ width: "100vw", height: "100vh" }}
       />
 
@@ -257,12 +261,14 @@ export default function DisplayPage() {
         <div className="absolute bottom-6 right-6 z-10">
           <button
             onClick={handleRecap}
-            disabled={recapState === "loading"}
+            disabled={recapState === "loading" || recapState === "empty"}
             className={`px-5 py-2.5 rounded-lg font-mono text-sm tracking-wider transition-all border ${
               recapState === "playing"
                 ? "bg-amber-500/20 border-amber-500/40 text-amber-300 hover:bg-amber-500/30"
                 : recapState === "loading"
                 ? "bg-white/5 border-white/10 text-white/30 cursor-wait"
+                : recapState === "empty"
+                ? "bg-red-500/10 border-red-500/30 text-red-300/60"
                 : "bg-white/10 border-white/20 text-white/60 hover:bg-white/20 hover:text-white/80"
             }`}
           >
@@ -270,6 +276,8 @@ export default function DisplayPage() {
               ? "loading..."
               : recapState === "playing"
               ? "stop recap"
+              : recapState === "empty"
+              ? "no notes yet"
               : "recap"}
           </button>
         </div>
