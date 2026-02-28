@@ -24,14 +24,14 @@ export default function PlayPage() {
   const [balance, setBalance] = useState<string | null>(null);
   const [showHint, setShowHint] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
-  const [copied, setCopied] = useState(false);
   const lastTouchRef = useRef(0);
   const rippleCtxRef = useRef<CanvasRenderingContext2D | null>(null);
 
-  // Setup wallet client once wallet is available
+  // Setup wallet client once any wallet is available
   useEffect(() => {
     async function setup() {
       if (wallets.length === 0) return;
+      // Use the first available wallet (could be external or embedded)
       const wallet = wallets[0];
       try {
         await wallet.switchChain(10143);
@@ -86,7 +86,7 @@ export default function PlayPage() {
 
   // Setup canvas for ripples
   useEffect(() => {
-    if (!authenticated || !walletClient) return;
+    if (!walletClient) return;
     const canvas = canvasRef.current;
     if (!canvas) return;
     canvas.width = window.innerWidth;
@@ -99,7 +99,7 @@ export default function PlayPage() {
     };
     window.addEventListener("resize", handleResize);
     return () => window.removeEventListener("resize", handleResize);
-  }, [authenticated, walletClient]);
+  }, [walletClient]);
 
   const createLocalRipple = useCallback((px: number, py: number) => {
     const ctx = rippleCtxRef.current;
@@ -175,12 +175,6 @@ export default function PlayPage() {
     }
   };
 
-  const copyAddress = () => {
-    navigator.clipboard.writeText(walletAddress);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  };
-
   const shortAddress = walletAddress
     ? `${walletAddress.slice(0, 6)}...${walletAddress.slice(-4)}`
     : "";
@@ -198,7 +192,7 @@ export default function PlayPage() {
     );
   }
 
-  // State 2: Not logged in — show login button
+  // State 2: Not logged in — show connect options
   if (!authenticated) {
     return (
       <div className="fixed inset-0 gradient-drift flex flex-col items-center justify-center gap-8">
@@ -210,10 +204,10 @@ export default function PlayPage() {
           disabled={isConnecting}
           className="px-8 py-4 bg-white/10 hover:bg-white/20 text-white/70 rounded-xl text-lg font-light tracking-wider transition-all border border-white/10 hover:border-white/20 disabled:opacity-50"
         >
-          {isConnecting ? "connecting..." : "tap to join"}
+          {isConnecting ? "connecting..." : "connect wallet"}
         </button>
-        <p className="text-white/20 text-xs font-light tracking-wider">
-          creates a wallet automatically
+        <p className="text-white/20 text-xs font-light tracking-wider text-center">
+          MetaMask, Coinbase, WalletConnect, or email
         </p>
       </div>
     );
@@ -230,7 +224,7 @@ export default function PlayPage() {
     );
   }
 
-  // State 4: Wallet ready but no balance — show fund prompt
+  // State 4: Wallet ready but no balance
   if (!hasBalance) {
     return (
       <div className="fixed inset-0 gradient-drift flex flex-col items-center justify-center gap-6 px-6">
@@ -239,15 +233,10 @@ export default function PlayPage() {
         </h1>
         <p className="text-white/40 text-sm font-light text-center">
           Your wallet needs testnet MON to play.
-          <br />
-          Send MON to your address:
         </p>
-        <button
-          onClick={copyAddress}
-          className="px-4 py-3 bg-white/10 hover:bg-white/15 rounded-lg font-mono text-sm text-white/70 transition-all border border-white/10 break-all max-w-xs text-center"
-        >
-          {copied ? "copied!" : walletAddress}
-        </button>
+        <div className="px-4 py-3 bg-white/10 rounded-lg font-mono text-sm text-white/70 break-all max-w-xs text-center">
+          {shortAddress}
+        </div>
         <div className="text-white/25 text-xs font-mono">
           Balance: {balance ? parseFloat(balance).toFixed(4) : "0"} MON
         </div>
@@ -260,7 +249,7 @@ export default function PlayPage() {
           Get testnet MON
         </a>
         <p className="text-white/20 text-xs font-light text-center max-w-xs">
-          Once funded, this page will update automatically
+          Fund your wallet, then this page updates automatically
         </p>
       </div>
     );

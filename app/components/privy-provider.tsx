@@ -34,8 +34,19 @@ export default function PrivyProvider({
         appearance: {
           theme: "dark",
           accentColor: "#4488ff",
+          walletList: [
+            "metamask",
+            "coinbase_wallet",
+            "rainbow",
+            "wallet_connect",
+          ],
         },
-        loginMethods: ["email", "google"],
+        loginMethods: ["wallet", "email", "google"],
+        externalWallets: {
+          coinbaseWallet: {
+            connectionOptions: "all",
+          },
+        },
       }}
     >
       {children}
