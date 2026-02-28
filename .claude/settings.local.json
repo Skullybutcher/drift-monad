@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:nikkudotdev-templates.vercel.app)",
+      "WebFetch(domain:docs.monad.xyz)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "WebFetch(domain:api.github.com)",
+      "Bash(yarn install:*)",
+      "Bash(npm:*)",
+      "Bash(mkdir:*)",
+      "Bash(npx hardhat:*)",
+      "Bash(npx next:*)",
+      "WebFetch(domain:github.com)"
+    ]
+  }
+}
