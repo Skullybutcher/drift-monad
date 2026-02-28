@@ -17,7 +17,7 @@ const TOUCH_COOLDOWN = 1000; // 1 second between touches
 
 export default function PlayPage() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const { ready, authenticated, login } = usePrivy();
+  const { ready, authenticated, login, connectWallet } = usePrivy();
   const { wallets } = useWallets();
   const [walletClient, setWalletClient] = useState<WalletClient | null>(null);
   const [walletAddress, setWalletAddress] = useState("");
@@ -32,9 +32,24 @@ export default function PlayPage() {
   useEffect(() => {
     async function setup() {
       if (wallets.length === 0) return;
+
+      // Debug: log all wallets so we can see what's available
+      console.log(
+        "Available wallets:",
+        wallets.map((w) => ({
+          type: w.walletClientType,
+          connector: w.connectorType,
+          address: w.address,
+        }))
+      );
+
       // Prefer external wallet over Privy embedded wallet
       const wallet =
-        wallets.find((w) => w.walletClientType !== "privy") ?? wallets[0];
+        wallets.find(
+          (w) =>
+            w.walletClientType !== "privy" &&
+            w.connectorType !== "embedded"
+        ) ?? wallets[0];
       try {
         await wallet.switchChain(10143);
         const provider = await wallet.getEthereumProvider();
@@ -235,15 +250,20 @@ export default function PlayPage() {
   // State 4: Wallet ready but no balance
   if (!hasBalance) {
     return (
-      <div className="fixed inset-0 gradient-drift flex flex-col items-center justify-center gap-6 px-6">
+      <div className="fixed inset-0 gradient-drift flex flex-col items-center justify-center gap-5 px-6">
         <h1 className="text-white/60 text-2xl font-extralight tracking-[0.3em]">
           DRIFT
         </h1>
         <p className="text-white/40 text-sm font-light text-center">
-          Your wallet needs testnet MON to play.
-          <br />
-          Send MON to this address:
+          This wallet has 0 MON. Connect a wallet with testnet MON:
         </p>
+        <button
+          onClick={() => connectWallet()}
+          className="px-6 py-3 bg-blue-600/30 hover:bg-blue-600/50 text-white/80 rounded-lg text-sm font-light tracking-wider transition-all border border-blue-500/30"
+        >
+          Connect a different wallet
+        </button>
+        <div className="text-white/20 text-xs">— or fund this one —</div>
         <button
           onClick={copyAddress}
           className="px-4 py-3 bg-white/10 hover:bg-white/15 rounded-lg font-mono text-xs text-white/70 transition-all border border-white/10 break-all max-w-sm text-center"
@@ -253,16 +273,8 @@ export default function PlayPage() {
         <div className="text-white/25 text-xs font-mono">
           Balance: {balance ? parseFloat(balance).toFixed(4) : "0"} MON
         </div>
-        <a
-          href="https://faucet.monad.xyz"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="px-6 py-3 bg-white/10 hover:bg-white/20 text-white/60 rounded-lg text-sm font-light tracking-wider transition-all border border-white/10"
-        >
-          Get testnet MON
-        </a>
         <p className="text-white/20 text-xs font-light text-center max-w-xs">
-          Tap address to copy. Page updates automatically once funded.
+          Send MON to the address above. Page updates automatically.
         </p>
       </div>
     );
