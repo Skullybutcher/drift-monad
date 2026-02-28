@@ -31,11 +31,13 @@ export default function LobbyPage() {
   const [origin, setOrigin] = useState("");
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const [creating, setCreating] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [qrSessionId, setQrSessionId] = useState<number | null>(null);
   const { ready, authenticated, login } = usePrivy();
   const { wallets } = useWallets();
   const [walletClient, setWalletClient] = useState<WalletClient | null>(null);
   const [walletAddress, setWalletAddress] = useState<`0x${string}` | null>(null);
+  const [walletReady, setWalletReady] = useState(false);
 
   // NFT minting state
   const [mintingSessionId, setMintingSessionId] = useState<number | null>(null);
@@ -51,6 +53,7 @@ export default function LobbyPage() {
   useEffect(() => {
     async function setup() {
       if (wallets.length === 0) return;
+      console.log("Lobby wallets:", wallets.map(w => ({ type: w.walletClientType, connector: w.connectorType, addr: w.address })));
       const wallet =
         wallets.find(
           (w) =>
@@ -65,10 +68,12 @@ export default function LobbyPage() {
           transport: custom(provider),
         });
         setWalletClient(client);
+        setWalletReady(true);
         const [addr] = await client.getAddresses();
         setWalletAddress(addr);
       } catch (err) {
         console.error("Wallet setup error:", err);
+        setError("Wallet setup failed. Try refreshing.");
       }
     }
     setup();
@@ -165,10 +170,15 @@ export default function LobbyPage() {
   }, [walletAddress, sessions]);
 
   const handleCreateSession = async () => {
-    if (!walletClient) return;
+    if (!walletClient) {
+      setError("Wallet not ready. Please wait or refresh.");
+      return;
+    }
     setCreating(true);
+    setError(null);
     try {
       const [account] = await walletClient.getAddresses();
+      console.log("Creating session with account:", account);
       const hash = await walletClient.writeContract({
         address: CONTRACT_ADDRESS,
         abi: DRIFT_ABI,
@@ -177,9 +187,11 @@ export default function LobbyPage() {
         account,
         chain: monadTestnet,
       });
+      console.log("Create session tx:", hash);
 
       const client = getPublicClient();
       const receipt = await client.waitForTransactionReceipt({ hash });
+      console.log("Create session receipt:", receipt.status);
 
       let newSessionId: number | null = null;
       for (const log of receipt.logs) {
@@ -197,8 +209,17 @@ export default function LobbyPage() {
       }
 
       await fetchSessions();
-    } catch (err) {
+    } catch (err: unknown) {
       console.error("Create session failed:", err);
+      const msg = err instanceof Error ? err.message : "Unknown error";
+      if (msg.includes("User rejected") || msg.includes("denied")) {
+        setError("Transaction rejected by wallet.");
+      } else if (msg.includes("insufficient")) {
+        setError("Insufficient MON for gas.");
+      } else {
+        setError("Failed to create session. Check console.");
+      }
+      setTimeout(() => setError(null), 5000);
     } finally {
       setCreating(false);
     }
@@ -263,14 +284,21 @@ export default function LobbyPage() {
           >
             Connect to create a session
           </button>
+        ) : !walletReady ? (
+          <div className="text-white/30 text-sm font-light animate-pulse">
+            setting up wallet...
+          </div>
         ) : (
           <button
             onClick={handleCreateSession}
-            disabled={creating || !walletClient}
+            disabled={creating}
             className="px-8 py-4 bg-emerald-600/30 hover:bg-emerald-600/50 text-white/80 rounded-xl text-lg font-light tracking-wider transition-all border border-emerald-500/30 disabled:opacity-50"
           >
             {creating ? "creating..." : "Create New Session"}
           </button>
+        )}
+        {error && (
+          <p className="mt-3 text-red-400/70 text-xs font-mono">{error}</p>
         )}
       </div>
 
