@@ -1,0 +1,40 @@
+{
+  "name": "next14-privy-serwist",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint"
+  },
+  "dependencies": {
+    "@privy-io/react-auth": "^2.14.2",
+    "@serwist/next": "^9.0.15",
+    "next": "14.2.30",
+    "qrcode.react": "^4.2.0",
+    "react": "^18",
+    "react-dom": "^18",
+    "serwist": "latest",
+    "three": "^0.183.1",
+    "tone": "^15.1.22",
+    "viem": "^2.31.2",
+    "web-push": "3.6.7"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox": "^4.0.0",
+    "@types/node": "^20",
+    "@types/react": "^18",
+    "@types/react-dom": "^18",
+    "@types/three": "^0.183.1",
+    "@types/web-push": "^3.6.4",
+    "dotenv": "^17.3.1",
+    "eslint": "^8",
+    "eslint-config-next": "14.2.30",
+    "hardhat": "^2.28.6",
+    "postcss": "^8",
+    "serwist": "^9.0.15",
+    "tailwindcss": "^3.4.1",
+    "typescript": "^5"
+  }
+}

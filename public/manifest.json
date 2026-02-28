@@ -1,0 +1,26 @@
+{
+  "name": "DRIFT — On-Chain Music",
+  "short_name": "DRIFT",
+  "description": "Real-time collaborative music composed by the crowd's transactions on Monad.",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#050510",
+  "theme_color": "#050510",
+  "start_url": "/play",
+  "scope": "/",
+  "id": "/",
+  "icons": [
+    {
+      "src": "/icons/android-chrome-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icons/icon-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}
