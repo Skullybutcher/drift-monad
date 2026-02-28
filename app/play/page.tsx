@@ -33,7 +33,7 @@ function PlayPage() {
   const lastTouchRef = useRef(0);
   const rippleCtxRef = useRef<CanvasRenderingContext2D | null>(null);
 
-  // Setup wallet client once any wallet is available
+  // Setup wallet — re-runs whenever wallets array changes (e.g. external wallet connected)
   useEffect(() => {
     async function setup() {
       if (wallets.length === 0) return;
@@ -47,13 +47,17 @@ function PlayPage() {
         }))
       );
 
-      // Prefer embedded wallet on play page — auto-signs every touch without popups
+      // Prefer external wallet (user explicitly connected it because it has funds)
+      // Fall back to embedded wallet if no external wallet
       const wallet =
         wallets.find(
           (w) =>
-            w.walletClientType === "privy" ||
-            w.connectorType === "embedded"
+            w.walletClientType !== "privy" &&
+            w.connectorType !== "embedded"
         ) ?? wallets[0];
+
+      console.log("Using wallet:", wallet.walletClientType, wallet.address);
+
       try {
         await wallet.switchChain(10143);
         const provider = await wallet.getEthereumProvider();
@@ -61,18 +65,19 @@ function PlayPage() {
           chain: monadTestnet,
           transport: custom(provider),
         });
-        setWalletClient(client);
-        setIsConnecting(false);
 
         const [addr] = await client.getAddresses();
-        setWalletAddress(addr);
-
         const publicClient = createPublicClient({
           chain: monadTestnet,
           transport: http(MONAD_RPC_URL),
         });
         const bal = await publicClient.getBalance({ address: addr });
+
+        // Update all state together
+        setWalletClient(client);
+        setWalletAddress(addr);
         setBalance(formatEther(bal));
+        setIsConnecting(false);
 
         setShowHint(true);
         setTimeout(() => setShowHint(false), 3000);

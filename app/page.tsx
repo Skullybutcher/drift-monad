@@ -49,18 +49,19 @@ export default function LobbyPage() {
     setOrigin(window.location.origin);
   }, []);
 
-  // Setup wallet
+  // Setup wallet — re-runs whenever wallets array changes (e.g. external wallet connected)
   useEffect(() => {
     async function setup() {
       if (wallets.length === 0) return;
       console.log("Lobby wallets:", wallets.map(w => ({ type: w.walletClientType, connector: w.connectorType, addr: w.address })));
-      // Use external wallet if connected, otherwise embedded
+      // Prefer external wallet if connected, fall back to embedded
       const wallet =
         wallets.find(
           (w) =>
             w.walletClientType !== "privy" &&
             w.connectorType !== "embedded"
         ) ?? wallets[0];
+      console.log("Lobby using wallet:", wallet.walletClientType, wallet.address);
       try {
         await wallet.switchChain(10143);
         const provider = await wallet.getEthereumProvider();
@@ -68,10 +69,10 @@ export default function LobbyPage() {
           chain: monadTestnet,
           transport: custom(provider),
         });
-        setWalletClient(client);
-        setWalletReady(true);
         const [addr] = await client.getAddresses();
+        setWalletClient(client);
         setWalletAddress(addr);
+        setWalletReady(true);
       } catch (err) {
         console.error("Wallet setup error:", err);
         setError("Wallet setup failed. Try refreshing.");
