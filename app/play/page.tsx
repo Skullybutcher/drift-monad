@@ -2,9 +2,16 @@
 
 import { useEffect, useRef, useState, useCallback } from "react";
 import { usePrivy, useWallets } from "@privy-io/react-auth";
-import { createWalletClient, custom, type WalletClient } from "viem";
+import {
+  createWalletClient,
+  createPublicClient,
+  custom,
+  http,
+  formatEther,
+  type WalletClient,
+} from "viem";
 import { monadTestnet } from "viem/chains";
-import { DRIFT_ABI, CONTRACT_ADDRESS } from "@/lib/contract";
+import { DRIFT_ABI, CONTRACT_ADDRESS, MONAD_RPC_URL } from "@/lib/contract";
 
 const TOUCH_COOLDOWN = 1000; // 1 second between touches
 
@@ -13,8 +20,11 @@ export default function PlayPage() {
   const { ready, authenticated, login } = usePrivy();
   const { wallets } = useWallets();
   const [walletClient, setWalletClient] = useState<WalletClient | null>(null);
+  const [walletAddress, setWalletAddress] = useState("");
+  const [balance, setBalance] = useState<string | null>(null);
   const [showHint, setShowHint] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
+  const [copied, setCopied] = useState(false);
   const lastTouchRef = useRef(0);
   const rippleCtxRef = useRef<CanvasRenderingContext2D | null>(null);
 
@@ -32,6 +42,19 @@ export default function PlayPage() {
         });
         setWalletClient(client);
         setIsConnecting(false);
+
+        // Get address
+        const [addr] = await client.getAddresses();
+        setWalletAddress(addr);
+
+        // Fetch balance
+        const publicClient = createPublicClient({
+          chain: monadTestnet,
+          transport: http(MONAD_RPC_URL),
+        });
+        const bal = await publicClient.getBalance({ address: addr });
+        setBalance(formatEther(bal));
+
         // Show hint once wallet is ready
         setShowHint(true);
         setTimeout(() => setShowHint(false), 3000);
@@ -42,6 +65,24 @@ export default function PlayPage() {
     }
     setup();
   }, [wallets]);
+
+  // Poll balance every 10s
+  useEffect(() => {
+    if (!walletAddress) return;
+    const publicClient = createPublicClient({
+      chain: monadTestnet,
+      transport: http(MONAD_RPC_URL),
+    });
+    const interval = setInterval(async () => {
+      try {
+        const bal = await publicClient.getBalance({
+          address: walletAddress as `0x${string}`,
+        });
+        setBalance(formatEther(bal));
+      } catch {}
+    }, 10000);
+    return () => clearInterval(interval);
+  }, [walletAddress]);
 
   // Setup canvas for ripples
   useEffect(() => {
@@ -134,6 +175,18 @@ export default function PlayPage() {
     }
   };
 
+  const copyAddress = () => {
+    navigator.clipboard.writeText(walletAddress);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  const shortAddress = walletAddress
+    ? `${walletAddress.slice(0, 6)}...${walletAddress.slice(-4)}`
+    : "";
+
+  const hasBalance = balance && parseFloat(balance) > 0;
+
   // State 1: Loading Privy
   if (!ready) {
     return (
@@ -177,7 +230,43 @@ export default function PlayPage() {
     );
   }
 
-  // State 4: Ready — show touch canvas
+  // State 4: Wallet ready but no balance — show fund prompt
+  if (!hasBalance) {
+    return (
+      <div className="fixed inset-0 gradient-drift flex flex-col items-center justify-center gap-6 px-6">
+        <h1 className="text-white/60 text-2xl font-extralight tracking-[0.3em]">
+          DRIFT
+        </h1>
+        <p className="text-white/40 text-sm font-light text-center">
+          Your wallet needs testnet MON to play.
+          <br />
+          Send MON to your address:
+        </p>
+        <button
+          onClick={copyAddress}
+          className="px-4 py-3 bg-white/10 hover:bg-white/15 rounded-lg font-mono text-sm text-white/70 transition-all border border-white/10 break-all max-w-xs text-center"
+        >
+          {copied ? "copied!" : walletAddress}
+        </button>
+        <div className="text-white/25 text-xs font-mono">
+          Balance: {balance ? parseFloat(balance).toFixed(4) : "0"} MON
+        </div>
+        <a
+          href="https://faucet.monad.xyz"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="px-6 py-3 bg-white/10 hover:bg-white/20 text-white/60 rounded-lg text-sm font-light tracking-wider transition-all border border-white/10"
+        >
+          Get testnet MON
+        </a>
+        <p className="text-white/20 text-xs font-light text-center max-w-xs">
+          Once funded, this page will update automatically
+        </p>
+      </div>
+    );
+  }
+
+  // State 5: Ready — show touch canvas
   return (
     <div className="fixed inset-0 overflow-hidden touch-none select-none">
       {/* Animated gradient background */}
@@ -189,6 +278,13 @@ export default function PlayPage() {
         className="absolute inset-0 w-full h-full z-10"
         onPointerDown={handleTouch}
       />
+
+      {/* Wallet info — top, subtle */}
+      <div className="absolute top-4 left-0 right-0 flex justify-center pointer-events-none z-20">
+        <div className="text-white/15 font-mono text-xs">
+          {shortAddress} &middot; {parseFloat(balance!).toFixed(4)} MON
+        </div>
+      </div>
 
       {/* Hint text — fades out */}
       {showHint && (
