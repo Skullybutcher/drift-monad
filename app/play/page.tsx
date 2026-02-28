@@ -31,8 +31,9 @@ export default function PlayPage() {
   useEffect(() => {
     async function setup() {
       if (wallets.length === 0) return;
-      // Use the first available wallet (could be external or embedded)
-      const wallet = wallets[0];
+      // Prefer external wallet over Privy embedded wallet
+      const wallet =
+        wallets.find((w) => w.walletClientType !== "privy") ?? wallets[0];
       try {
         await wallet.switchChain(10143);
         const provider = await wallet.getEthereumProvider();
@@ -233,10 +234,15 @@ export default function PlayPage() {
         </h1>
         <p className="text-white/40 text-sm font-light text-center">
           Your wallet needs testnet MON to play.
+          <br />
+          Send MON to this address:
         </p>
-        <div className="px-4 py-3 bg-white/10 rounded-lg font-mono text-sm text-white/70 break-all max-w-xs text-center">
-          {shortAddress}
-        </div>
+        <button
+          onClick={copyAddress}
+          className="px-4 py-3 bg-white/10 hover:bg-white/15 rounded-lg font-mono text-xs text-white/70 transition-all border border-white/10 break-all max-w-sm text-center"
+        >
+          {copied ? "copied!" : walletAddress}
+        </button>
         <div className="text-white/25 text-xs font-mono">
           Balance: {balance ? parseFloat(balance).toFixed(4) : "0"} MON
         </div>
@@ -249,7 +255,7 @@ export default function PlayPage() {
           Get testnet MON
         </a>
         <p className="text-white/20 text-xs font-light text-center max-w-xs">
-          Fund your wallet, then this page updates automatically
+          Tap address to copy. Page updates automatically once funded.
         </p>
       </div>
     );
