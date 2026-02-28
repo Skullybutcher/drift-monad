@@ -270,8 +270,11 @@ export default function LobbyPage() {
       <h1 className="text-white/90 text-5xl md:text-7xl font-extralight tracking-[0.5em] mb-2">
         DRIFT
       </h1>
-      <p className="text-white/30 text-sm font-light tracking-[0.3em] mb-10">
+      <p className="text-white/30 text-sm font-light tracking-[0.3em] mb-3">
         REAL-TIME ON-CHAIN MUSIC
+      </p>
+      <p className="text-purple-300/30 text-xs font-mono tracking-wider mb-10">
+        Play notes on-chain &middot; Mint your session as an NFT
       </p>
 
       {/* Create Session */}
@@ -426,7 +429,11 @@ export default function LobbyPage() {
                   >
                     Recap
                   </Link>
-                  {canMintMap[s.id] && (
+                  {hasMintedMap[s.id] ? (
+                    <span className="px-3 py-1.5 text-emerald-400/50 text-xs font-mono border border-emerald-500/15 rounded">
+                      NFT minted
+                    </span>
+                  ) : canMintMap[s.id] ? (
                     <button
                       onClick={() => handleMintNFT(s.id)}
                       disabled={mintingSessionId === s.id}
@@ -434,10 +441,16 @@ export default function LobbyPage() {
                     >
                       {mintingSessionId === s.id ? "minting..." : "Mint NFT"}
                     </button>
-                  )}
-                  {hasMintedMap[s.id] && (
-                    <span className="px-3 py-1.5 text-emerald-400/50 text-xs font-mono">
-                      minted
+                  ) : !authenticated ? (
+                    <button
+                      onClick={() => login()}
+                      className="px-3 py-1.5 bg-purple-600/10 text-purple-300/40 rounded text-xs font-mono hover:bg-purple-600/20 transition border border-purple-500/10"
+                    >
+                      Mint NFT
+                    </button>
+                  ) : (
+                    <span className="px-3 py-1.5 text-white/20 text-xs font-mono">
+                      NFT
                     </span>
                   )}
                 </div>
