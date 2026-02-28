@@ -6,7 +6,16 @@ import Link from "next/link";
 import { DriftAudioEngine } from "@/lib/audioEngine";
 import { DriftVisualEngine } from "@/lib/visualEngine";
 import { DriftEventListener, type NoteEvent } from "@/lib/eventListener";
-import { getPublicClient, DRIFT_ABI, CONTRACT_ADDRESS } from "@/lib/contract";
+import { usePrivy, useWallets } from "@privy-io/react-auth";
+import { createWalletClient, custom, type WalletClient } from "viem";
+import { monadTestnet } from "viem/chains";
+import {
+  getPublicClient,
+  DRIFT_ABI,
+  CONTRACT_ADDRESS,
+  NFT_ABI,
+  NFT_CONTRACT_ADDRESS,
+} from "@/lib/contract";
 
 type RecapState = "idle" | "loading" | "playing" | "empty";
 
@@ -20,6 +29,90 @@ function DisplayPage() {
   const audioRef = useRef<DriftAudioEngine | null>(null);
   const visualRef = useRef<DriftVisualEngine | null>(null);
   const listenerRef = useRef<DriftEventListener | null>(null);
+
+  // Wallet + NFT state
+  const { authenticated, login } = usePrivy();
+  const { wallets } = useWallets();
+  const [displayWallet, setDisplayWallet] = useState<WalletClient | null>(null);
+  const [canMintNFT, setCanMintNFT] = useState(false);
+  const [hasMintedNFT, setHasMintedNFT] = useState(false);
+  const [minting, setMinting] = useState(false);
+  const [mintTokenId, setMintTokenId] = useState<number | null>(null);
+
+  // Setup wallet for minting
+  useEffect(() => {
+    async function setup() {
+      if (wallets.length === 0) return;
+      const wallet =
+        wallets.find(
+          (w) => w.walletClientType !== "privy" && w.connectorType !== "embedded"
+        ) ?? wallets[0];
+      try {
+        await wallet.switchChain(10143);
+        const provider = await wallet.getEthereumProvider();
+        setDisplayWallet(
+          createWalletClient({ chain: monadTestnet, transport: custom(provider) })
+        );
+      } catch {}
+    }
+    setup();
+  }, [wallets]);
+
+  // Check NFT eligibility
+  useEffect(() => {
+    async function check() {
+      if (!displayWallet || !sessionId) return;
+      const client = getPublicClient();
+      const [addr] = await displayWallet.getAddresses();
+      try {
+        const can = await client.readContract({
+          address: NFT_CONTRACT_ADDRESS,
+          abi: NFT_ABI,
+          functionName: "canMint",
+          args: [BigInt(sessionId), addr],
+        });
+        const has = await client.readContract({
+          address: NFT_CONTRACT_ADDRESS,
+          abi: NFT_ABI,
+          functionName: "hasMinted",
+          args: [BigInt(sessionId), addr],
+        });
+        setCanMintNFT(can as boolean);
+        setHasMintedNFT(has as boolean);
+      } catch {}
+    }
+    check();
+  }, [displayWallet, sessionId]);
+
+  const handleMintNFT = useCallback(async () => {
+    if (!displayWallet || !sessionId) return;
+    setMinting(true);
+    try {
+      const [account] = await displayWallet.getAddresses();
+      const hash = await displayWallet.writeContract({
+        address: NFT_CONTRACT_ADDRESS,
+        abi: NFT_ABI,
+        functionName: "mintSession",
+        args: [BigInt(sessionId)],
+        account,
+        chain: monadTestnet,
+      });
+      const client = getPublicClient();
+      const receipt = await client.waitForTransactionReceipt({ hash });
+      for (const log of receipt.logs) {
+        if (log.address.toLowerCase() === NFT_CONTRACT_ADDRESS.toLowerCase() && log.topics[1]) {
+          setMintTokenId(Number(BigInt(log.topics[1])));
+          break;
+        }
+      }
+      setCanMintNFT(false);
+      setHasMintedNFT(true);
+    } catch (err) {
+      console.error("Mint failed:", err);
+    } finally {
+      setMinting(false);
+    }
+  }, [displayWallet, sessionId]);
 
   // Recap state
   const [recapState, setRecapState] = useState<RecapState>("idle");
@@ -258,9 +351,34 @@ function DisplayPage() {
         </div>
       )}
 
-      {/* Recap button — bottom right */}
+      {/* Bottom-right buttons: Mint + Recap */}
       {started && (
-        <div className="absolute bottom-6 right-6 z-10">
+        <div className="absolute bottom-6 right-6 z-10 flex gap-3">
+          {/* Mint NFT button */}
+          {authenticated && canMintNFT && !hasMintedNFT && (
+            <button
+              onClick={handleMintNFT}
+              disabled={minting}
+              className="px-5 py-2.5 rounded-lg font-mono text-sm tracking-wider transition-all border bg-purple-500/20 border-purple-500/40 text-purple-300 hover:bg-purple-500/30 disabled:opacity-50"
+            >
+              {minting ? "minting..." : "Mint NFT"}
+            </button>
+          )}
+          {authenticated && hasMintedNFT && (
+            <span className="px-5 py-2.5 rounded-lg font-mono text-sm tracking-wider border bg-emerald-500/10 border-emerald-500/20 text-emerald-400/60">
+              {mintTokenId ? `NFT #${mintTokenId}` : "minted"}
+            </span>
+          )}
+          {!authenticated && (
+            <button
+              onClick={() => login()}
+              className="px-5 py-2.5 rounded-lg font-mono text-xs tracking-wider transition-all border bg-white/5 border-white/10 text-white/30 hover:text-white/50"
+            >
+              connect to mint
+            </button>
+          )}
+
+          {/* Recap button */}
           <button
             onClick={handleRecap}
             disabled={recapState === "loading" || recapState === "empty"}

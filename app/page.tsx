@@ -9,7 +9,13 @@ import {
   type WalletClient,
 } from "viem";
 import { monadTestnet } from "viem/chains";
-import { getPublicClient, DRIFT_ABI, CONTRACT_ADDRESS } from "@/lib/contract";
+import {
+  getPublicClient,
+  DRIFT_ABI,
+  CONTRACT_ADDRESS,
+  NFT_ABI,
+  NFT_CONTRACT_ADDRESS,
+} from "@/lib/contract";
 import Link from "next/link";
 
 interface SessionInfo {
@@ -29,6 +35,13 @@ export default function LobbyPage() {
   const { ready, authenticated, login } = usePrivy();
   const { wallets } = useWallets();
   const [walletClient, setWalletClient] = useState<WalletClient | null>(null);
+  const [walletAddress, setWalletAddress] = useState<`0x${string}` | null>(null);
+
+  // NFT minting state
+  const [mintingSessionId, setMintingSessionId] = useState<number | null>(null);
+  const [mintSuccess, setMintSuccess] = useState<{ sessionId: number; tokenId: number } | null>(null);
+  const [canMintMap, setCanMintMap] = useState<Record<number, boolean>>({});
+  const [hasMintedMap, setHasMintedMap] = useState<Record<number, boolean>>({});
 
   useEffect(() => {
     setOrigin(window.location.origin);
@@ -52,6 +65,8 @@ export default function LobbyPage() {
           transport: custom(provider),
         });
         setWalletClient(client);
+        const [addr] = await client.getAddresses();
+        setWalletAddress(addr);
       } catch (err) {
         console.error("Wallet setup error:", err);
       }
@@ -104,9 +119,7 @@ export default function LobbyPage() {
       }
 
       setSessions(fetched);
-    } catch {
-      // Contract may not be deployed
-    }
+    } catch {}
   }, []);
 
   useEffect(() => {
@@ -114,6 +127,42 @@ export default function LobbyPage() {
     const interval = setInterval(fetchSessions, 8000);
     return () => clearInterval(interval);
   }, [fetchSessions]);
+
+  // Check NFT mint eligibility for ended sessions
+  useEffect(() => {
+    async function checkMintStatus() {
+      if (!walletAddress || sessions.length === 0) return;
+      const ended = sessions.filter((s) => !s.active);
+      if (ended.length === 0) return;
+
+      const client = getPublicClient();
+      const canMap: Record<number, boolean> = {};
+      const hasMap: Record<number, boolean> = {};
+
+      for (const s of ended) {
+        try {
+          const can = await client.readContract({
+            address: NFT_CONTRACT_ADDRESS,
+            abi: NFT_ABI,
+            functionName: "canMint",
+            args: [BigInt(s.id), walletAddress],
+          });
+          const has = await client.readContract({
+            address: NFT_CONTRACT_ADDRESS,
+            abi: NFT_ABI,
+            functionName: "hasMinted",
+            args: [BigInt(s.id), walletAddress],
+          });
+          canMap[s.id] = can as boolean;
+          hasMap[s.id] = has as boolean;
+        } catch {}
+      }
+
+      setCanMintMap(canMap);
+      setHasMintedMap(hasMap);
+    }
+    checkMintStatus();
+  }, [walletAddress, sessions]);
 
   const handleCreateSession = async () => {
     if (!walletClient) return;
@@ -129,17 +178,13 @@ export default function LobbyPage() {
         chain: monadTestnet,
       });
 
-      // Wait for receipt to get the session ID
       const client = getPublicClient();
       const receipt = await client.waitForTransactionReceipt({ hash });
 
-      // Parse SessionStarted event to get the new sessionId
       let newSessionId: number | null = null;
       for (const log of receipt.logs) {
         try {
-          // SessionStarted topic0
           if (log.topics[0] && log.topics[1]) {
-            // The sessionId is the first indexed param (topics[1])
             const sid = BigInt(log.topics[1]);
             newSessionId = Number(sid);
             break;
@@ -151,7 +196,6 @@ export default function LobbyPage() {
         setQrSessionId(newSessionId);
       }
 
-      // Refresh session list
       await fetchSessions();
     } catch (err) {
       console.error("Create session failed:", err);
@@ -160,12 +204,48 @@ export default function LobbyPage() {
     }
   };
 
+  const handleMintNFT = async (sessionId: number) => {
+    if (!walletClient) return;
+    setMintingSessionId(sessionId);
+    try {
+      const [account] = await walletClient.getAddresses();
+      const hash = await walletClient.writeContract({
+        address: NFT_CONTRACT_ADDRESS,
+        abi: NFT_ABI,
+        functionName: "mintSession",
+        args: [BigInt(sessionId)],
+        account,
+        chain: monadTestnet,
+      });
+
+      const client = getPublicClient();
+      const receipt = await client.waitForTransactionReceipt({ hash });
+
+      // Parse SessionNFTMinted event — tokenId is topics[1]
+      let tokenId = 0;
+      for (const log of receipt.logs) {
+        if (log.address.toLowerCase() === NFT_CONTRACT_ADDRESS.toLowerCase() && log.topics[1]) {
+          tokenId = Number(BigInt(log.topics[1]));
+          break;
+        }
+      }
+
+      setMintSuccess({ sessionId, tokenId });
+      setCanMintMap((prev) => ({ ...prev, [sessionId]: false }));
+      setHasMintedMap((prev) => ({ ...prev, [sessionId]: true }));
+      setTimeout(() => setMintSuccess(null), 6000);
+    } catch (err) {
+      console.error("Mint failed:", err);
+    } finally {
+      setMintingSessionId(null);
+    }
+  };
+
   const activeSessions = sessions.filter((s) => s.active);
   const endedSessions = sessions.filter((s) => !s.active);
 
   return (
     <div className="min-h-screen bg-[#050510] flex flex-col items-center px-4 py-12">
-      {/* Title */}
       <h1 className="text-white/90 text-5xl md:text-7xl font-extralight tracking-[0.5em] mb-2">
         DRIFT
       </h1>
@@ -194,7 +274,16 @@ export default function LobbyPage() {
         )}
       </div>
 
-      {/* QR code for newly created or selected session */}
+      {/* Mint success toast */}
+      {mintSuccess && (
+        <div className="w-full max-w-lg mb-4 px-4 py-3 bg-emerald-600/10 border border-emerald-500/20 rounded-lg text-center">
+          <p className="text-emerald-300/80 text-sm font-mono">
+            NFT #{mintSuccess.tokenId} minted for Session #{mintSuccess.sessionId}
+          </p>
+        </div>
+      )}
+
+      {/* QR code */}
       {qrSessionId && origin && (
         <div className="mb-10 flex flex-col items-center gap-3">
           <p className="text-white/50 text-sm font-mono">
@@ -282,7 +371,7 @@ export default function LobbyPage() {
         </div>
       )}
 
-      {/* Ended Sessions */}
+      {/* Past Sessions */}
       {endedSessions.length > 0 && (
         <div className="w-full max-w-lg mb-8">
           <h2 className="text-white/25 text-xs font-mono tracking-widest mb-3 uppercase">
@@ -302,26 +391,40 @@ export default function LobbyPage() {
                     {s.totalNotes} notes &middot; {s.uniquePlayers} players
                   </p>
                 </div>
-                <Link
-                  href={`/display?session=${s.id}`}
-                  className="px-3 py-1.5 bg-white/5 text-white/30 rounded text-xs font-mono hover:bg-white/10 transition"
-                >
-                  Recap
-                </Link>
+                <div className="flex gap-2">
+                  <Link
+                    href={`/display?session=${s.id}`}
+                    className="px-3 py-1.5 bg-white/5 text-white/30 rounded text-xs font-mono hover:bg-white/10 transition"
+                  >
+                    Recap
+                  </Link>
+                  {canMintMap[s.id] && (
+                    <button
+                      onClick={() => handleMintNFT(s.id)}
+                      disabled={mintingSessionId === s.id}
+                      className="px-3 py-1.5 bg-purple-600/20 text-purple-300/70 rounded text-xs font-mono hover:bg-purple-600/30 transition border border-purple-500/20 disabled:opacity-50"
+                    >
+                      {mintingSessionId === s.id ? "minting..." : "Mint NFT"}
+                    </button>
+                  )}
+                  {hasMintedMap[s.id] && (
+                    <span className="px-3 py-1.5 text-emerald-400/50 text-xs font-mono">
+                      minted
+                    </span>
+                  )}
+                </div>
               </div>
             ))}
           </div>
         </div>
       )}
 
-      {/* Empty state */}
       {sessions.length === 0 && (
         <p className="text-white/20 text-sm font-light mt-4">
           No sessions yet. Create one to get started!
         </p>
       )}
 
-      {/* Footer */}
       <p className="mt-auto pt-8 text-white/15 text-xs font-mono tracking-wider">
         Powered by Monad &middot; 1s blocks &middot; Every touch is a
         transaction

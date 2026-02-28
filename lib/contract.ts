@@ -110,8 +110,58 @@ export const DRIFT_ABI = [
   },
 ] as const satisfies Abi;
 
+export const NFT_ABI = [
+  {
+    type: "event",
+    name: "SessionNFTMinted",
+    inputs: [
+      { name: "tokenId", type: "uint256", indexed: true },
+      { name: "sessionId", type: "uint256", indexed: true },
+      { name: "player", type: "address", indexed: true },
+    ],
+  },
+  {
+    type: "function",
+    name: "mintSession",
+    inputs: [{ name: "sessionId", type: "uint256" }],
+    outputs: [{ name: "", type: "uint256" }],
+    stateMutability: "nonpayable",
+  },
+  {
+    type: "function",
+    name: "canMint",
+    inputs: [
+      { name: "sessionId", type: "uint256" },
+      { name: "player", type: "address" },
+    ],
+    outputs: [{ name: "", type: "bool" }],
+    stateMutability: "view",
+  },
+  {
+    type: "function",
+    name: "hasMinted",
+    inputs: [
+      { name: "sessionId", type: "uint256" },
+      { name: "player", type: "address" },
+    ],
+    outputs: [{ name: "", type: "bool" }],
+    stateMutability: "view",
+  },
+  {
+    type: "function",
+    name: "tokenURI",
+    inputs: [{ name: "tokenId", type: "uint256" }],
+    outputs: [{ name: "", type: "string" }],
+    stateMutability: "view",
+  },
+] as const satisfies Abi;
+
 export const CONTRACT_ADDRESS =
   (process.env.NEXT_PUBLIC_DRIFT_CONTRACT_ADDRESS as `0x${string}`) ??
+  "0x0000000000000000000000000000000000000000";
+
+export const NFT_CONTRACT_ADDRESS =
+  (process.env.NEXT_PUBLIC_NFT_CONTRACT_ADDRESS as `0x${string}`) ??
   "0x0000000000000000000000000000000000000000";
 
 export const MONAD_RPC_URL =
