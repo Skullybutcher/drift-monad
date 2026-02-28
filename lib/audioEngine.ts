@@ -26,10 +26,14 @@ export class DriftAudioEngine {
   private ambientDrone!: Tone.PolySynth;
 
   private panner!: Tone.Panner;
+  private fft!: Tone.FFT;
 
   async initialize() {
     if (this.initialized) return;
     await Tone.start();
+
+    // FFT analyser for spectrum visualization
+    this.fft = new Tone.FFT(256);
 
     // Effects chain
     this.compressor = new Tone.Compressor({
@@ -38,6 +42,7 @@ export class DriftAudioEngine {
       attack: 0.003,
       release: 0.25,
     }).toDestination();
+    this.compressor.connect(this.fft);
 
     this.reverb = new Tone.Reverb({
       decay: 6,
@@ -158,6 +163,12 @@ export class DriftAudioEngine {
     }
   }
 
+  /** Returns FFT frequency data as Float32Array (values in dB, -100 to 0) */
+  getFFTData(): Float32Array {
+    if (!this.initialized) return new Float32Array(0);
+    return this.fft.getValue() as Float32Array;
+  }
+
   dispose() {
     if (!this.initialized) return;
     try {
@@ -175,6 +186,7 @@ export class DriftAudioEngine {
       this.delayChannel?.dispose();
       this.masterChannel?.dispose();
       this.panner?.dispose();
+      this.fft?.dispose();
     } catch {
       // Cleanup errors are non-critical
     }

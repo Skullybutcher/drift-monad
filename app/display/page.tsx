@@ -24,6 +24,8 @@ function DisplayPage() {
   const sessionId = searchParams.get("session");
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const spectrumRef = useRef<HTMLCanvasElement>(null);
+  const spectrumAnimRef = useRef<number>(0);
   const [started, setStarted] = useState(false);
   const [stats, setStats] = useState({ notes: 0, players: 0, block: 0 });
   const audioRef = useRef<DriftAudioEngine | null>(null);
@@ -244,6 +246,46 @@ function DisplayPage() {
       } catch {}
     }, 5000);
 
+    // Start spectrum visualizer
+    const specCanvas = spectrumRef.current;
+    if (specCanvas) {
+      const ctx = specCanvas.getContext("2d")!;
+      const resize = () => {
+        specCanvas.width = window.innerWidth;
+        specCanvas.height = 120;
+      };
+      resize();
+      window.addEventListener("resize", resize);
+
+      const drawSpectrum = () => {
+        spectrumAnimRef.current = requestAnimationFrame(drawSpectrum);
+        const data = audio.getFFTData();
+        if (data.length === 0) return;
+
+        const w = specCanvas.width;
+        const h = specCanvas.height;
+        ctx.clearRect(0, 0, w, h);
+
+        // Use lower half of FFT bins (more musical range)
+        const binCount = Math.floor(data.length / 2);
+        const barWidth = w / binCount;
+
+        for (let i = 0; i < binCount; i++) {
+          // dB range: -100 (silent) to 0 (max) → normalize to 0-1
+          const db = data[i];
+          const norm = Math.max(0, (db + 100) / 100);
+          const barH = norm * h;
+
+          // Color gradient: purple at low freq → cyan at high freq
+          const hue = 260 + (i / binCount) * 60; // 260 (purple) to 320 (pink)
+          const alpha = 0.3 + norm * 0.5;
+          ctx.fillStyle = `hsla(${hue}, 70%, 60%, ${alpha})`;
+          ctx.fillRect(i * barWidth, h - barH, barWidth - 1, barH);
+        }
+      };
+      drawSpectrum();
+    }
+
     setStarted(true);
 
     return () => {
@@ -255,6 +297,7 @@ function DisplayPage() {
   useEffect(() => {
     return () => {
       stopRecap();
+      cancelAnimationFrame(spectrumAnimRef.current);
       listenerRef.current?.stopListening();
       visualRef.current?.dispose();
       audioRef.current?.dispose();
@@ -287,6 +330,15 @@ function DisplayPage() {
         className="absolute inset-0 w-full h-full pointer-events-none"
         style={{ width: "100vw", height: "100vh" }}
       />
+
+      {/* Spectrum analyser — bottom of screen */}
+      {started && (
+        <canvas
+          ref={spectrumRef}
+          className="absolute bottom-0 left-0 w-full pointer-events-none z-[5]"
+          style={{ height: "120px" }}
+        />
+      )}
 
       {/* HUD — bottom left */}
       {started && (
