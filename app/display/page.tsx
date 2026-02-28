@@ -45,9 +45,10 @@ function DisplayPage() {
   useEffect(() => {
     async function setup() {
       if (wallets.length === 0) return;
+      // Prefer embedded wallet — auto-signs without approval popups
       const wallet =
         wallets.find(
-          (w) => w.walletClientType !== "privy" && w.connectorType !== "embedded"
+          (w) => w.walletClientType === "privy" || w.connectorType === "embedded"
         ) ?? wallets[0];
       try {
         await wallet.switchChain(10143);

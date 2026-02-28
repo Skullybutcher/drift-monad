@@ -47,11 +47,12 @@ function PlayPage() {
         }))
       );
 
+      // Prefer embedded wallet — it auto-signs transactions (no approval popups)
       const wallet =
         wallets.find(
           (w) =>
-            w.walletClientType !== "privy" &&
-            w.connectorType !== "embedded"
+            w.walletClientType === "privy" ||
+            w.connectorType === "embedded"
         ) ?? wallets[0];
       try {
         await wallet.switchChain(10143);
