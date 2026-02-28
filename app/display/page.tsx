@@ -1,6 +1,8 @@
 "use client";
 
-import { useEffect, useRef, useState, useCallback } from "react";
+import { Suspense, useEffect, useRef, useState, useCallback } from "react";
+import { useSearchParams } from "next/navigation";
+import Link from "next/link";
 import { DriftAudioEngine } from "@/lib/audioEngine";
 import { DriftVisualEngine } from "@/lib/visualEngine";
 import { DriftEventListener, type NoteEvent } from "@/lib/eventListener";
@@ -8,7 +10,10 @@ import { getPublicClient, DRIFT_ABI, CONTRACT_ADDRESS } from "@/lib/contract";
 
 type RecapState = "idle" | "loading" | "playing" | "empty";
 
-export default function DisplayPage() {
+function DisplayPage() {
+  const searchParams = useSearchParams();
+  const sessionId = searchParams.get("session");
+
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [started, setStarted] = useState(false);
   const [stats, setStats] = useState({ notes: 0, players: 0, block: 0 });
@@ -21,7 +26,6 @@ export default function DisplayPage() {
   const [recapProgress, setRecapProgress] = useState({ current: 0, total: 0 });
   const recapTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
   const recapLoopRef = useRef(true);
-  const recapEventsRef = useRef<NoteEvent[]>([]);
 
   const stopRecap = useCallback(() => {
     recapLoopRef.current = false;
@@ -37,15 +41,11 @@ export default function DisplayPage() {
       const visual = visualRef.current;
       if (!audio || !visual || events.length === 0) return;
 
-      // Clear any existing timers
       for (const t of recapTimersRef.current) clearTimeout(t);
       recapTimersRef.current = [];
 
-      // Calculate timing: use block numbers to derive relative timing
-      // Each block is ~1s on Monad, so gap = (blockDiff) * 200ms for faster recap
-      // Also use noteIndex within the same block for sub-block spacing
-      const BLOCK_GAP_MS = 200; // each block gap compressed to 200ms for recap
-      const INTRA_BLOCK_GAP_MS = 80; // notes within same block spaced 80ms apart
+      const BLOCK_GAP_MS = 200;
+      const INTRA_BLOCK_GAP_MS = 80;
 
       const baseBlock = events[0].blockNum;
       let totalDuration = 0;
@@ -54,7 +54,6 @@ export default function DisplayPage() {
       for (let i = 0; i < events.length; i++) {
         const ev = events[i];
         const blockOffset = ev.blockNum - baseBlock;
-        // Count how many notes before this one share the same block
         let intraIndex = 0;
         for (let j = i - 1; j >= 0; j--) {
           if (events[j].blockNum === ev.blockNum) intraIndex++;
@@ -65,7 +64,6 @@ export default function DisplayPage() {
         if (ms > totalDuration) totalDuration = ms;
       }
 
-      // Add a 2-second pause at the end before looping
       const loopDuration = totalDuration + 2000;
 
       const scheduleOnce = () => {
@@ -78,7 +76,6 @@ export default function DisplayPage() {
           recapTimersRef.current.push(timer);
         }
 
-        // Schedule next loop
         const loopTimer = setTimeout(() => {
           if (recapLoopRef.current) {
             recapTimersRef.current = [];
@@ -93,54 +90,47 @@ export default function DisplayPage() {
     []
   );
 
+  const startLiveListening = useCallback((sid: number) => {
+    const listener = listenerRef.current;
+    if (!listener) return;
+    listener.startListening(sid, (note: NoteEvent) => {
+      audioRef.current?.playNote(note);
+      visualRef.current?.createRipple(note);
+      setStats((prev) => ({
+        notes: note.totalNotes,
+        players: prev.players,
+        block: note.blockNum,
+      }));
+    });
+  }, []);
+
   const handleRecap = useCallback(async () => {
+    if (!sessionId) return;
+    const sid = Number(sessionId);
+
     if (recapState === "playing") {
       stopRecap();
-      // Resume live listening
-      const listener = listenerRef.current;
-      if (listener && audioRef.current && visualRef.current) {
-        listener.startListening((note: NoteEvent) => {
-          audioRef.current?.playNote(note);
-          visualRef.current?.createRipple(note);
-          setStats((prev) => ({
-            notes: note.totalNotes,
-            players: prev.players,
-            block: note.blockNum,
-          }));
-        });
-      }
+      startLiveListening(sid);
       return;
     }
 
     setRecapState("loading");
-
-    // Pause live listening during recap
     listenerRef.current?.stopListening();
 
     try {
       const listener = listenerRef.current ?? new DriftEventListener();
-      const events = await listener.fetchAllEvents();
+      const events = await listener.fetchAllEvents(sid);
 
       if (events.length === 0) {
-        console.log("[Recap] No events found on-chain");
+        console.log("[Recap] No events found for session", sid);
         setRecapState("empty");
-        // Show "no events" briefly then go back to idle and resume live
         setTimeout(() => {
           setRecapState("idle");
-          listenerRef.current?.startListening((note: NoteEvent) => {
-            audioRef.current?.playNote(note);
-            visualRef.current?.createRipple(note);
-            setStats((prev) => ({
-              notes: note.totalNotes,
-              players: prev.players,
-              block: note.blockNum,
-            }));
-          });
+          startLiveListening(sid);
         }, 3000);
         return;
       }
 
-      recapEventsRef.current = events;
       recapLoopRef.current = true;
       setRecapState("playing");
       setRecapProgress({ current: 0, total: events.length });
@@ -148,18 +138,14 @@ export default function DisplayPage() {
     } catch (err) {
       console.error("Recap failed:", err);
       setRecapState("idle");
-      // Resume live
-      listenerRef.current?.startListening((note: NoteEvent) => {
-        audioRef.current?.playNote(note);
-        visualRef.current?.createRipple(note);
-      });
+      startLiveListening(sid);
     }
-  }, [recapState, stopRecap, scheduleRecapLoop]);
+  }, [recapState, sessionId, stopRecap, scheduleRecapLoop, startLiveListening]);
 
   const handleStart = useCallback(async () => {
-    if (!canvasRef.current) return;
+    if (!canvasRef.current || !sessionId) return;
+    const sid = Number(sessionId);
 
-    // Initialize engines
     const audio = new DriftAudioEngine();
     await audio.initialize();
     audio.startAmbientDrone();
@@ -169,9 +155,8 @@ export default function DisplayPage() {
     visual.startRenderLoop();
     visualRef.current = visual;
 
-    // Start event listener
     const listener = new DriftEventListener();
-    listener.startListening((note: NoteEvent) => {
+    listener.startListening(sid, (note: NoteEvent) => {
       audio.playNote(note);
       visual.createRipple(note);
       setStats((prev) => ({
@@ -182,14 +167,15 @@ export default function DisplayPage() {
     });
     listenerRef.current = listener;
 
-    // Poll session info periodically
+    // Poll session info
     const sessionPoll = setInterval(async () => {
       try {
         const client = getPublicClient();
         const session = await client.readContract({
           address: CONTRACT_ADDRESS,
           abi: DRIFT_ABI,
-          functionName: "getCurrentSession",
+          functionName: "getSession",
+          args: [BigInt(sid)],
         });
         if (session) {
           const s = session as unknown as {
@@ -203,9 +189,7 @@ export default function DisplayPage() {
             players: Number(s.uniquePlayers),
           }));
         }
-      } catch {
-        // Session read may fail before contract is deployed
-      }
+      } catch {}
     }, 5000);
 
     setStarted(true);
@@ -213,7 +197,7 @@ export default function DisplayPage() {
     return () => {
       clearInterval(sessionPoll);
     };
-  }, []);
+  }, [sessionId]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -225,16 +209,34 @@ export default function DisplayPage() {
     };
   }, [stopRecap]);
 
+  // No session selected
+  if (!sessionId) {
+    return (
+      <div className="fixed inset-0 bg-black flex flex-col items-center justify-center gap-5">
+        <h1 className="text-white/60 text-2xl font-extralight tracking-[0.3em]">
+          DRIFT
+        </h1>
+        <p className="text-white/30 text-sm font-light">No session selected</p>
+        <Link
+          href="/"
+          className="px-6 py-3 bg-white/10 hover:bg-white/20 text-white/60 rounded-lg text-sm font-light tracking-wider transition-all border border-white/10"
+        >
+          Go to lobby
+        </Link>
+      </div>
+    );
+  }
+
   return (
     <div className="relative w-screen h-screen overflow-hidden bg-black">
-      {/* Three.js canvas — pointer-events-none so HUD buttons stay clickable */}
+      {/* Three.js canvas */}
       <canvas
         ref={canvasRef}
         className="absolute inset-0 w-full h-full pointer-events-none"
         style={{ width: "100vw", height: "100vh" }}
       />
 
-      {/* Minimal HUD — bottom left */}
+      {/* HUD — bottom left */}
       {started && (
         <div className="absolute bottom-6 left-6 text-white/40 font-mono text-sm z-10">
           <div className="flex items-center gap-2">
@@ -244,8 +246,8 @@ export default function DisplayPage() {
               }`}
             />
             <span>
-              DRIFT —{" "}
-              {recapState === "playing" ? "Recap Playing" : "Session Live"}
+              DRIFT — Session #{sessionId} —{" "}
+              {recapState === "playing" ? "Recap" : "Live"}
             </span>
           </div>
           <div className="mt-1 text-white/25">
@@ -290,16 +292,19 @@ export default function DisplayPage() {
         </div>
       )}
 
-      {/* Click-to-start overlay (browser autoplay policy) */}
+      {/* Click-to-start overlay */}
       {!started && (
         <div
           className="absolute inset-0 flex items-center justify-center bg-black/80 cursor-pointer z-20"
           onClick={handleStart}
         >
           <div className="text-center">
-            <h1 className="text-white/80 text-4xl font-light tracking-[0.4em] mb-4">
+            <h1 className="text-white/80 text-4xl font-light tracking-[0.4em] mb-2">
               DRIFT
             </h1>
+            <p className="text-white/40 text-sm font-mono mb-6">
+              Session #{sessionId}
+            </p>
             <p className="text-white/30 text-lg font-light tracking-widest">
               CLICK TO BEGIN
             </p>
@@ -307,5 +312,21 @@ export default function DisplayPage() {
         </div>
       )}
     </div>
+  );
+}
+
+export default function DisplayPageWrapper() {
+  return (
+    <Suspense
+      fallback={
+        <div className="fixed inset-0 bg-black flex items-center justify-center">
+          <div className="text-white/30 text-lg font-light tracking-[0.3em] animate-pulse">
+            loading...
+          </div>
+        </div>
+      }
+    >
+      <DisplayPage />
+    </Suspense>
   );
 }

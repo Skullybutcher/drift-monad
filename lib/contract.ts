@@ -2,6 +2,7 @@ import { createPublicClient, http, type Abi } from "viem";
 import { monadTestnet } from "viem/chains";
 
 export const DRIFT_ABI = [
+  // ── Events ──
   {
     type: "event",
     name: "NoteCreated",
@@ -21,6 +22,7 @@ export const DRIFT_ABI = [
     name: "SessionStarted",
     inputs: [
       { name: "sessionId", type: "uint256", indexed: true },
+      { name: "creator", type: "address", indexed: true },
       { name: "startBlock", type: "uint64", indexed: false },
     ],
   },
@@ -34,46 +36,51 @@ export const DRIFT_ABI = [
       { name: "uniquePlayers", type: "uint16", indexed: false },
     ],
   },
+  // ── Session Management ──
+  {
+    type: "function",
+    name: "createSession",
+    inputs: [],
+    outputs: [{ name: "", type: "uint256" }],
+    stateMutability: "nonpayable",
+  },
+  {
+    type: "function",
+    name: "endSession",
+    inputs: [{ name: "sessionId", type: "uint256" }],
+    outputs: [],
+    stateMutability: "nonpayable",
+  },
+  // ── Core ──
   {
     type: "function",
     name: "touch",
     inputs: [
+      { name: "sessionId", type: "uint256" },
       { name: "x", type: "int16" },
       { name: "y", type: "int16" },
     ],
     outputs: [],
     stateMutability: "nonpayable",
   },
+  // ── View Functions ──
   {
     type: "function",
-    name: "startSession",
-    inputs: [],
-    outputs: [],
-    stateMutability: "nonpayable",
-  },
-  {
-    type: "function",
-    name: "endSession",
-    inputs: [],
-    outputs: [],
-    stateMutability: "nonpayable",
-  },
-  {
-    type: "function",
-    name: "currentSessionId",
+    name: "nextSessionId",
     inputs: [],
     outputs: [{ name: "", type: "uint256" }],
     stateMutability: "view",
   },
   {
     type: "function",
-    name: "getCurrentSession",
-    inputs: [],
+    name: "getSession",
+    inputs: [{ name: "sessionId", type: "uint256" }],
     outputs: [
       {
         name: "",
         type: "tuple",
         components: [
+          { name: "creator", type: "address" },
           { name: "startBlock", type: "uint64" },
           { name: "endBlock", type: "uint64" },
           { name: "totalNotes", type: "uint32" },
@@ -82,6 +89,23 @@ export const DRIFT_ABI = [
         ],
       },
     ],
+    stateMutability: "view",
+  },
+  {
+    type: "function",
+    name: "isSessionActive",
+    inputs: [{ name: "sessionId", type: "uint256" }],
+    outputs: [{ name: "", type: "bool" }],
+    stateMutability: "view",
+  },
+  {
+    type: "function",
+    name: "getBlockNoteCount",
+    inputs: [
+      { name: "sessionId", type: "uint256" },
+      { name: "blockNum", type: "uint64" },
+    ],
+    outputs: [{ name: "", type: "uint16" }],
     stateMutability: "view",
   },
 ] as const satisfies Abi;

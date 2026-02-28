@@ -1,6 +1,8 @@
 "use client";
 
-import { useEffect, useRef, useState, useCallback } from "react";
+import { Suspense, useEffect, useRef, useState, useCallback } from "react";
+import { useSearchParams } from "next/navigation";
+import Link from "next/link";
 import { usePrivy, useWallets } from "@privy-io/react-auth";
 import {
   createWalletClient,
@@ -13,9 +15,12 @@ import {
 import { monadTestnet } from "viem/chains";
 import { DRIFT_ABI, CONTRACT_ADDRESS, MONAD_RPC_URL } from "@/lib/contract";
 
-const TOUCH_COOLDOWN = 1000; // 1 second between touches
+const TOUCH_COOLDOWN = 1000;
 
-export default function PlayPage() {
+function PlayPage() {
+  const searchParams = useSearchParams();
+  const sessionId = searchParams.get("session");
+
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const { ready, authenticated, login, connectWallet } = usePrivy();
   const { wallets } = useWallets();
@@ -33,7 +38,6 @@ export default function PlayPage() {
     async function setup() {
       if (wallets.length === 0) return;
 
-      // Debug: log all wallets so we can see what's available
       console.log(
         "Available wallets:",
         wallets.map((w) => ({
@@ -43,7 +47,6 @@ export default function PlayPage() {
         }))
       );
 
-      // Prefer external wallet over Privy embedded wallet
       const wallet =
         wallets.find(
           (w) =>
@@ -60,11 +63,9 @@ export default function PlayPage() {
         setWalletClient(client);
         setIsConnecting(false);
 
-        // Get address
         const [addr] = await client.getAddresses();
         setWalletAddress(addr);
 
-        // Fetch balance
         const publicClient = createPublicClient({
           chain: monadTestnet,
           transport: http(MONAD_RPC_URL),
@@ -72,7 +73,6 @@ export default function PlayPage() {
         const bal = await publicClient.getBalance({ address: addr });
         setBalance(formatEther(bal));
 
-        // Show hint once wallet is ready
         setShowHint(true);
         setTimeout(() => setShowHint(false), 3000);
       } catch (err) {
@@ -147,13 +147,12 @@ export default function PlayPage() {
       if (now - lastTouchRef.current < TOUCH_COOLDOWN) return;
       lastTouchRef.current = now;
 
-      if (!walletClient || !canvasRef.current) return;
+      if (!walletClient || !canvasRef.current || !sessionId) return;
 
       const rect = canvasRef.current.getBoundingClientRect();
       const clientX = e.clientX;
       const clientY = e.clientY;
 
-      // Normalize to -1000..+1000
       const x = Math.round(
         ((clientX - rect.left) / rect.width) * 2000 - 1000
       );
@@ -161,17 +160,15 @@ export default function PlayPage() {
         ((clientY - rect.top) / rect.height) * 2000 - 1000
       );
 
-      // Local ripple immediately
       createLocalRipple(clientX - rect.left, clientY - rect.top);
 
-      // Fire-and-forget transaction
       try {
         const [account] = await walletClient.getAddresses();
         walletClient.writeContract({
           address: CONTRACT_ADDRESS,
           abi: DRIFT_ABI,
           functionName: "touch",
-          args: [x, y],
+          args: [BigInt(sessionId), x, y],
           account,
           chain: monadTestnet,
         });
@@ -179,7 +176,7 @@ export default function PlayPage() {
         console.error("Transaction failed:", err);
       }
     },
-    [walletClient, createLocalRipple]
+    [walletClient, createLocalRipple, sessionId]
   );
 
   const handleLogin = async () => {
@@ -204,7 +201,25 @@ export default function PlayPage() {
 
   const hasBalance = balance && parseFloat(balance) > 0;
 
-  // State 1: Loading Privy
+  // No session selected
+  if (!sessionId) {
+    return (
+      <div className="fixed inset-0 gradient-drift flex flex-col items-center justify-center gap-5">
+        <h1 className="text-white/60 text-2xl font-extralight tracking-[0.3em]">
+          DRIFT
+        </h1>
+        <p className="text-white/30 text-sm font-light">No session selected</p>
+        <Link
+          href="/"
+          className="px-6 py-3 bg-white/10 hover:bg-white/20 text-white/60 rounded-lg text-sm font-light tracking-wider transition-all border border-white/10"
+        >
+          Go to lobby
+        </Link>
+      </div>
+    );
+  }
+
+  // Loading Privy
   if (!ready) {
     return (
       <div className="fixed inset-0 gradient-drift flex items-center justify-center">
@@ -215,13 +230,16 @@ export default function PlayPage() {
     );
   }
 
-  // State 2: Not logged in — show connect options
+  // Not logged in
   if (!authenticated) {
     return (
       <div className="fixed inset-0 gradient-drift flex flex-col items-center justify-center gap-8">
         <h1 className="text-white/60 text-3xl font-extralight tracking-[0.4em]">
           DRIFT
         </h1>
+        <p className="text-white/30 text-xs font-mono">
+          Session #{sessionId}
+        </p>
         <button
           onClick={handleLogin}
           disabled={isConnecting}
@@ -236,7 +254,7 @@ export default function PlayPage() {
     );
   }
 
-  // State 3: Logged in but wallet not ready yet
+  // Wallet not ready
   if (!walletClient) {
     return (
       <div className="fixed inset-0 gradient-drift flex items-center justify-center">
@@ -247,7 +265,7 @@ export default function PlayPage() {
     );
   }
 
-  // State 4: Wallet ready but no balance
+  // No balance
   if (!hasBalance) {
     return (
       <div className="fixed inset-0 gradient-drift flex flex-col items-center justify-center gap-5 px-6">
@@ -263,7 +281,7 @@ export default function PlayPage() {
         >
           Connect a different wallet
         </button>
-        <div className="text-white/20 text-xs">— or fund this one —</div>
+        <div className="text-white/20 text-xs">&mdash; or fund this one &mdash;</div>
         <button
           onClick={copyAddress}
           className="px-4 py-3 bg-white/10 hover:bg-white/15 rounded-lg font-mono text-xs text-white/70 transition-all border border-white/10 break-all max-w-sm text-center"
@@ -280,27 +298,25 @@ export default function PlayPage() {
     );
   }
 
-  // State 5: Ready — show touch canvas
+  // Ready — touch canvas
   return (
     <div className="fixed inset-0 overflow-hidden touch-none select-none">
-      {/* Animated gradient background */}
       <div className="absolute inset-0 gradient-drift" />
 
-      {/* Canvas for ripple effects */}
       <canvas
         ref={canvasRef}
         className="absolute inset-0 w-full h-full z-10"
         onPointerDown={handleTouch}
       />
 
-      {/* Wallet info — top, subtle */}
+      {/* Session + wallet info */}
       <div className="absolute top-4 left-0 right-0 flex justify-center pointer-events-none z-20">
         <div className="text-white/15 font-mono text-xs">
-          {shortAddress} &middot; {parseFloat(balance!).toFixed(4)} MON
+          Session #{sessionId} &middot; {shortAddress} &middot;{" "}
+          {parseFloat(balance!).toFixed(4)} MON
         </div>
       </div>
 
-      {/* Hint text — fades out */}
       {showHint && (
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-20">
           <p className="text-white/20 text-lg font-light tracking-[0.3em] animate-fade-out">
@@ -309,5 +325,21 @@ export default function PlayPage() {
         </div>
       )}
     </div>
+  );
+}
+
+export default function PlayPageWrapper() {
+  return (
+    <Suspense
+      fallback={
+        <div className="fixed inset-0 gradient-drift flex items-center justify-center">
+          <div className="text-white/30 text-lg font-light tracking-[0.3em] animate-pulse">
+            loading...
+          </div>
+        </div>
+      }
+    >
+      <PlayPage />
+    </Suspense>
   );
 }

@@ -8,6 +8,7 @@ contract DriftComposer {
     // ──────────────────────────────────────
 
     struct Session {
+        address creator;
         uint64 startBlock;
         uint64 endBlock;
         uint32 totalNotes;
@@ -30,34 +31,26 @@ contract DriftComposer {
         uint32 totalNotesInSession
     );
 
-    event SessionStarted(uint256 indexed sessionId, uint64 startBlock);
+    event SessionStarted(uint256 indexed sessionId, address indexed creator, uint64 startBlock);
     event SessionEnded(uint256 indexed sessionId, uint64 endBlock, uint32 totalNotes, uint16 uniquePlayers);
+
+    // ──────────────────────────────────────
+    //  Constants
+    // ──────────────────────────────────────
+
+    uint256 public constant MAX_SESSION_BLOCKS = 43200; // ~12 hours at 1s blocks
 
     // ──────────────────────────────────────
     //  State
     // ──────────────────────────────────────
 
     address public owner;
-    uint256 public currentSessionId;
+    uint256 public nextSessionId;
 
     mapping(uint256 => Session) public sessions;
     mapping(uint256 => mapping(address => bool)) public hasPlayed;
     mapping(uint256 => uint16) private playerCount;
     mapping(uint256 => mapping(uint64 => uint16)) public notesInBlock;
-
-    // ──────────────────────────────────────
-    //  Modifiers
-    // ──────────────────────────────────────
-
-    modifier onlyOwner() {
-        require(msg.sender == owner, "Not owner");
-        _;
-    }
-
-    modifier sessionActive() {
-        require(sessions[currentSessionId].active, "No active session");
-        _;
-    }
 
     // ──────────────────────────────────────
     //  Constructor
@@ -68,48 +61,58 @@ contract DriftComposer {
     }
 
     // ──────────────────────────────────────
-    //  Core Functions
+    //  Session Management (anyone can create)
     // ──────────────────────────────────────
 
-    function startSession() external onlyOwner {
-        if (sessions[currentSessionId].active) {
-            _endCurrentSession();
-        }
-        currentSessionId++;
-        sessions[currentSessionId] = Session({
+    function createSession() external returns (uint256) {
+        nextSessionId++;
+        sessions[nextSessionId] = Session({
+            creator: msg.sender,
             startBlock: uint64(block.number),
             endBlock: 0,
             totalNotes: 0,
             uniquePlayers: 0,
             active: true
         });
-        emit SessionStarted(currentSessionId, uint64(block.number));
+        emit SessionStarted(nextSessionId, msg.sender, uint64(block.number));
+        return nextSessionId;
     }
 
-    function endSession() external onlyOwner {
-        require(sessions[currentSessionId].active, "No active session");
-        _endCurrentSession();
+    function endSession(uint256 sessionId) external {
+        Session storage session = sessions[sessionId];
+        require(session.active, "Not active");
+        require(msg.sender == session.creator || msg.sender == owner, "Not authorized");
+        _endSession(sessionId);
     }
 
-    function touch(int16 x, int16 y) external sessionActive {
+    // ──────────────────────────────────────
+    //  Core Touch Function
+    // ──────────────────────────────────────
+
+    function touch(uint256 sessionId, int16 x, int16 y) external {
+        Session storage session = sessions[sessionId];
+        require(session.active, "Session not active");
+        require(
+            block.number <= session.startBlock + MAX_SESSION_BLOCKS,
+            "Session expired"
+        );
+
         int16 clampedX = _clamp(x, -1000, 1000);
         int16 clampedY = _clamp(y, -1000, 1000);
 
-        Session storage session = sessions[currentSessionId];
-
-        if (!hasPlayed[currentSessionId][msg.sender]) {
-            hasPlayed[currentSessionId][msg.sender] = true;
-            playerCount[currentSessionId]++;
-            session.uniquePlayers = playerCount[currentSessionId];
+        if (!hasPlayed[sessionId][msg.sender]) {
+            hasPlayed[sessionId][msg.sender] = true;
+            playerCount[sessionId]++;
+            session.uniquePlayers = playerCount[sessionId];
         }
 
         session.totalNotes++;
         uint64 blockNum = uint64(block.number);
-        notesInBlock[currentSessionId][blockNum]++;
-        uint16 noteIndex = notesInBlock[currentSessionId][blockNum];
+        notesInBlock[sessionId][blockNum]++;
+        uint16 noteIndex = notesInBlock[sessionId][blockNum];
 
         emit NoteCreated(
-            currentSessionId,
+            sessionId,
             msg.sender,
             clampedX,
             clampedY,
@@ -124,8 +127,13 @@ contract DriftComposer {
     //  View Functions
     // ──────────────────────────────────────
 
-    function getCurrentSession() external view returns (Session memory) {
-        return sessions[currentSessionId];
+    function getSession(uint256 sessionId) external view returns (Session memory) {
+        return sessions[sessionId];
+    }
+
+    function isSessionActive(uint256 sessionId) external view returns (bool) {
+        Session storage session = sessions[sessionId];
+        return session.active && block.number <= session.startBlock + MAX_SESSION_BLOCKS;
     }
 
     function getBlockNoteCount(uint256 sessionId, uint64 blockNum) external view returns (uint16) {
@@ -136,12 +144,12 @@ contract DriftComposer {
     //  Internal
     // ──────────────────────────────────────
 
-    function _endCurrentSession() internal {
-        Session storage session = sessions[currentSessionId];
+    function _endSession(uint256 sessionId) internal {
+        Session storage session = sessions[sessionId];
         session.endBlock = uint64(block.number);
         session.active = false;
         emit SessionEnded(
-            currentSessionId,
+            sessionId,
             uint64(block.number),
             session.totalNotes,
             session.uniquePlayers

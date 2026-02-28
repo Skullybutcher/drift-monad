@@ -1,8 +1,7 @@
-import pkg from "hardhat";
-const { ethers } = pkg;
+const hre = require("hardhat");
 
 async function main() {
-  const DriftComposer = await ethers.getContractFactory("DriftComposer");
+  const DriftComposer = await hre.ethers.getContractFactory("DriftComposer");
   const drift = await DriftComposer.deploy();
   await drift.waitForDeployment();
 
