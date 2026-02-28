@@ -13,16 +13,10 @@ export default function PlayPage() {
   const { ready, authenticated, login } = usePrivy();
   const { wallets } = useWallets();
   const [walletClient, setWalletClient] = useState<WalletClient | null>(null);
-  const [showHint, setShowHint] = useState(true);
+  const [showHint, setShowHint] = useState(false);
+  const [isConnecting, setIsConnecting] = useState(false);
   const lastTouchRef = useRef(0);
   const rippleCtxRef = useRef<CanvasRenderingContext2D | null>(null);
-
-  // Auto-login on mount
-  useEffect(() => {
-    if (ready && !authenticated) {
-      login();
-    }
-  }, [ready, authenticated, login]);
 
   // Setup wallet client once wallet is available
   useEffect(() => {
@@ -37,21 +31,21 @@ export default function PlayPage() {
           transport: custom(provider),
         });
         setWalletClient(client);
+        setIsConnecting(false);
+        // Show hint once wallet is ready
+        setShowHint(true);
+        setTimeout(() => setShowHint(false), 3000);
       } catch (err) {
         console.error("Wallet setup error:", err);
+        setIsConnecting(false);
       }
     }
     setup();
   }, [wallets]);
 
-  // Fade out hint after 3 seconds
-  useEffect(() => {
-    const timer = setTimeout(() => setShowHint(false), 3000);
-    return () => clearTimeout(timer);
-  }, []);
-
   // Setup canvas for ripples
   useEffect(() => {
+    if (!authenticated || !walletClient) return;
     const canvas = canvasRef.current;
     if (!canvas) return;
     canvas.width = window.innerWidth;
@@ -64,7 +58,7 @@ export default function PlayPage() {
     };
     window.addEventListener("resize", handleResize);
     return () => window.removeEventListener("resize", handleResize);
-  }, []);
+  }, [authenticated, walletClient]);
 
   const createLocalRipple = useCallback((px: number, py: number) => {
     const ctx = rippleCtxRef.current;
@@ -102,8 +96,12 @@ export default function PlayPage() {
       const clientY = e.clientY;
 
       // Normalize to -1000..+1000
-      const x = Math.round(((clientX - rect.left) / rect.width) * 2000 - 1000);
-      const y = Math.round(((clientY - rect.top) / rect.height) * 2000 - 1000);
+      const x = Math.round(
+        ((clientX - rect.left) / rect.width) * 2000 - 1000
+      );
+      const y = Math.round(
+        ((clientY - rect.top) / rect.height) * 2000 - 1000
+      );
 
       // Local ripple immediately
       createLocalRipple(clientX - rect.left, clientY - rect.top);
@@ -111,7 +109,7 @@ export default function PlayPage() {
       // Fire-and-forget transaction
       try {
         const [account] = await walletClient.getAddresses();
-        await walletClient.writeContract({
+        walletClient.writeContract({
           address: CONTRACT_ADDRESS,
           abi: DRIFT_ABI,
           functionName: "touch",
@@ -126,6 +124,60 @@ export default function PlayPage() {
     [walletClient, createLocalRipple]
   );
 
+  const handleLogin = async () => {
+    setIsConnecting(true);
+    try {
+      login();
+    } catch (err) {
+      console.error("Login error:", err);
+      setIsConnecting(false);
+    }
+  };
+
+  // State 1: Loading Privy
+  if (!ready) {
+    return (
+      <div className="fixed inset-0 gradient-drift flex items-center justify-center">
+        <div className="text-white/30 text-lg font-light tracking-[0.3em] animate-pulse">
+          loading...
+        </div>
+      </div>
+    );
+  }
+
+  // State 2: Not logged in — show login button
+  if (!authenticated) {
+    return (
+      <div className="fixed inset-0 gradient-drift flex flex-col items-center justify-center gap-8">
+        <h1 className="text-white/60 text-3xl font-extralight tracking-[0.4em]">
+          DRIFT
+        </h1>
+        <button
+          onClick={handleLogin}
+          disabled={isConnecting}
+          className="px-8 py-4 bg-white/10 hover:bg-white/20 text-white/70 rounded-xl text-lg font-light tracking-wider transition-all border border-white/10 hover:border-white/20 disabled:opacity-50"
+        >
+          {isConnecting ? "connecting..." : "tap to join"}
+        </button>
+        <p className="text-white/20 text-xs font-light tracking-wider">
+          creates a wallet automatically
+        </p>
+      </div>
+    );
+  }
+
+  // State 3: Logged in but wallet not ready yet
+  if (!walletClient) {
+    return (
+      <div className="fixed inset-0 gradient-drift flex items-center justify-center">
+        <div className="text-white/30 text-lg font-light tracking-[0.3em] animate-pulse">
+          setting up wallet...
+        </div>
+      </div>
+    );
+  }
+
+  // State 4: Ready — show touch canvas
   return (
     <div className="fixed inset-0 overflow-hidden touch-none select-none">
       {/* Animated gradient background */}
