@@ -24,6 +24,7 @@ export default function PlayPage() {
   const [balance, setBalance] = useState<string | null>(null);
   const [showHint, setShowHint] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
+  const [copied, setCopied] = useState(false);
   const lastTouchRef = useRef(0);
   const rippleCtxRef = useRef<CanvasRenderingContext2D | null>(null);
 
@@ -174,6 +175,12 @@ export default function PlayPage() {
       console.error("Login error:", err);
       setIsConnecting(false);
     }
+  };
+
+  const copyAddress = () => {
+    navigator.clipboard.writeText(walletAddress);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
   };
 
   const shortAddress = walletAddress
