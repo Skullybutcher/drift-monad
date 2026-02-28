@@ -12,46 +12,31 @@ export interface NoteEvent {
   transactionHash: string;
 }
 
-const NOTE_EVENT = {
-  type: "event" as const,
-  name: "NoteCreated" as const,
-  inputs: [
-    { name: "sessionId", type: "uint256", indexed: true },
-    { name: "player", type: "address", indexed: true },
-    { name: "x", type: "int16", indexed: false },
-    { name: "y", type: "int16", indexed: false },
-    { name: "blockNum", type: "uint64", indexed: false },
-    { name: "timestamp", type: "uint64", indexed: false },
-    { name: "noteIndex", type: "uint16", indexed: false },
-    { name: "totalNotesInSession", type: "uint32", indexed: false },
-  ],
-};
+interface NoteCreatedArgs {
+  sessionId: bigint;
+  player: `0x${string}`;
+  x: number;
+  y: number;
+  blockNum: bigint;
+  timestamp: bigint;
+  noteIndex: number;
+  totalNotesInSession: number;
+}
 
-function parseNoteLog(log: {
-  args: Record<string, unknown>;
-  transactionHash?: string;
-}): NoteEvent | null {
-  const args = log.args as {
-    sessionId?: bigint;
-    player?: string;
-    x?: number;
-    y?: number;
-    blockNum?: bigint;
-    timestamp?: bigint;
-    noteIndex?: number;
-    totalNotesInSession?: number;
-  };
-  if (!args.sessionId) return null;
+function toNoteEvent(
+  args: NoteCreatedArgs,
+  txHash: string
+): NoteEvent {
   return {
     sessionId: Number(args.sessionId),
-    player: args.player ?? "",
-    x: args.x ?? 0,
-    y: args.y ?? 0,
-    blockNum: Number(args.blockNum ?? 0n),
-    timestamp: Number(args.timestamp ?? 0n),
-    noteIndex: args.noteIndex ?? 0,
-    totalNotes: args.totalNotesInSession ?? 0,
-    transactionHash: (log as { transactionHash?: string }).transactionHash ?? "",
+    player: args.player,
+    x: args.x,
+    y: args.y,
+    blockNum: Number(args.blockNum),
+    timestamp: Number(args.timestamp),
+    noteIndex: args.noteIndex,
+    totalNotes: args.totalNotesInSession,
+    transactionHash: txHash,
   };
 }
 
@@ -69,19 +54,19 @@ export class DriftEventListener {
         const currentBlock = await client.getBlockNumber();
         if (currentBlock <= this.lastProcessedBlock) return;
 
-        const logs = await client.getLogs({
+        const logs = await client.getContractEvents({
           address: CONTRACT_ADDRESS,
-          event: NOTE_EVENT,
-          args: {
-            sessionId: BigInt(sessionId),
-          },
+          abi: DRIFT_ABI,
+          eventName: "NoteCreated",
           fromBlock: this.lastProcessedBlock + 1n,
           toBlock: currentBlock,
         });
 
         for (const log of logs) {
-          const note = parseNoteLog(log as { args: Record<string, unknown>; transactionHash?: string });
-          if (note) onNote(note);
+          const args = log.args as unknown as NoteCreatedArgs;
+          if (!args.sessionId) continue;
+          const note = toNoteEvent(args, log.transactionHash ?? "");
+          if (note.sessionId === sessionId) onNote(note);
         }
 
         this.lastProcessedBlock = currentBlock;
@@ -99,8 +84,9 @@ export class DriftEventListener {
   }
 
   /**
-   * Fetch all NoteCreated events for a specific session.
-   * Queries in chunks to avoid RPC block-range limits.
+   * Fetch all NoteCreated events for a session.
+   * Uses getContractEvents with the full ABI for reliable decoding.
+   * Chunks block ranges to avoid RPC limits.
    */
   async fetchAllEvents(sessionId: number): Promise<NoteEvent[]> {
     const client = getPublicClient();
@@ -110,7 +96,7 @@ export class DriftEventListener {
       const currentBlock = await client.getBlockNumber();
       console.log("[Recap] Current block:", currentBlock.toString());
 
-      // Get session start block
+      // Get session start block from contract
       let startBlock = 0n;
       try {
         const session = await client.readContract({
@@ -119,19 +105,23 @@ export class DriftEventListener {
           functionName: "getSession",
           args: [BigInt(sessionId)],
         });
-        const s = session as unknown as { startBlock: bigint };
-        if (s.startBlock > 0n) {
-          startBlock = s.startBlock;
+        console.log("[Recap] Raw session data:", session);
+        // viem returns tuple as array: [creator, startBlock, endBlock, totalNotes, uniquePlayers, active]
+        if (Array.isArray(session) && session[1]) {
+          startBlock = BigInt(session[1]);
+        } else {
+          const s = session as unknown as { startBlock?: bigint };
+          if (s.startBlock && s.startBlock > 0n) startBlock = s.startBlock;
         }
-      } catch {
-        console.log("[Recap] Could not read session, scanning recent blocks");
+      } catch (e) {
+        console.warn("[Recap] Could not read session:", e);
       }
 
       if (startBlock === 0n) {
         startBlock = currentBlock > 50000n ? currentBlock - 50000n : 0n;
       }
 
-      console.log("[Recap] Session", sessionId, "scanning from block", startBlock.toString());
+      console.log("[Recap] Scanning blocks", startBlock.toString(), "to", currentBlock.toString());
 
       const CHUNK_SIZE = 5000n;
       let from = startBlock;
@@ -140,19 +130,23 @@ export class DriftEventListener {
         const to = from + CHUNK_SIZE - 1n > currentBlock ? currentBlock : from + CHUNK_SIZE - 1n;
 
         try {
-          const logs = await client.getLogs({
+          const logs = await client.getContractEvents({
             address: CONTRACT_ADDRESS,
-            event: NOTE_EVENT,
-            args: {
-              sessionId: BigInt(sessionId),
-            },
+            abi: DRIFT_ABI,
+            eventName: "NoteCreated",
             fromBlock: from,
             toBlock: to,
           });
 
+          console.log("[Recap] Chunk", from.toString(), "-", to.toString(), "→", logs.length, "logs");
+
           for (const log of logs) {
-            const note = parseNoteLog(log as { args: Record<string, unknown>; transactionHash?: string });
-            if (note) events.push(note);
+            const args = log.args as unknown as NoteCreatedArgs;
+            if (!args.sessionId) continue;
+            const note = toNoteEvent(args, log.transactionHash ?? "");
+            if (note.sessionId === sessionId) {
+              events.push(note);
+            }
           }
         } catch (chunkError) {
           console.warn("[Recap] Chunk failed:", from.toString(), "-", to.toString(), chunkError);
@@ -161,14 +155,14 @@ export class DriftEventListener {
         from = to + 1n;
       }
 
-      console.log("[Recap] Found", events.length, "events for session", sessionId);
+      console.log("[Recap] Total events for session", sessionId, ":", events.length);
 
       events.sort((a, b) => {
         if (a.blockNum !== b.blockNum) return a.blockNum - b.blockNum;
         return a.noteIndex - b.noteIndex;
       });
     } catch (error) {
-      console.error("[Recap] Failed to fetch events:", error);
+      console.error("[Recap] Failed:", error);
     }
 
     return events;

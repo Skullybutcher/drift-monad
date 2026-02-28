@@ -117,68 +117,44 @@ function DisplayPage() {
   // Recap state
   const [recapState, setRecapState] = useState<RecapState>("idle");
   const [recapProgress, setRecapProgress] = useState({ current: 0, total: 0 });
-  const recapTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
-  const recapLoopRef = useRef(true);
+  const recapAbortRef = useRef<AbortController | null>(null);
 
   const stopRecap = useCallback(() => {
-    recapLoopRef.current = false;
-    for (const t of recapTimersRef.current) clearTimeout(t);
-    recapTimersRef.current = [];
+    recapAbortRef.current?.abort();
+    recapAbortRef.current = null;
     setRecapState("idle");
     setRecapProgress({ current: 0, total: 0 });
   }, []);
 
-  const scheduleRecapLoop = useCallback(
-    (events: NoteEvent[]) => {
+  const playRecapSequence = useCallback(
+    async (events: NoteEvent[], signal: AbortSignal) => {
       const audio = audioRef.current;
       const visual = visualRef.current;
       if (!audio || !visual || events.length === 0) return;
 
-      for (const t of recapTimersRef.current) clearTimeout(t);
-      recapTimersRef.current = [];
+      const NOTE_GAP_MS = 300;
 
-      const BLOCK_GAP_MS = 200;
-      const INTRA_BLOCK_GAP_MS = 80;
-
-      const baseBlock = events[0].blockNum;
-      let totalDuration = 0;
-
-      const timings: number[] = [];
-      for (let i = 0; i < events.length; i++) {
-        const ev = events[i];
-        const blockOffset = ev.blockNum - baseBlock;
-        let intraIndex = 0;
-        for (let j = i - 1; j >= 0; j--) {
-          if (events[j].blockNum === ev.blockNum) intraIndex++;
-          else break;
-        }
-        const ms = blockOffset * BLOCK_GAP_MS + intraIndex * INTRA_BLOCK_GAP_MS;
-        timings.push(ms);
-        if (ms > totalDuration) totalDuration = ms;
-      }
-
-      const loopDuration = totalDuration + 2000;
-
-      const scheduleOnce = () => {
+      // Loop forever until aborted
+      while (!signal.aborted) {
         for (let i = 0; i < events.length; i++) {
-          const timer = setTimeout(() => {
-            audio.playNote(events[i]);
-            visual.createRipple(events[i]);
-            setRecapProgress({ current: i + 1, total: events.length });
-          }, timings[i]);
-          recapTimersRef.current.push(timer);
+          if (signal.aborted) return;
+          audio.playNote(events[i]);
+          visual.createRipple(events[i]);
+          setRecapProgress({ current: i + 1, total: events.length });
+          // Wait between notes
+          await new Promise<void>((resolve) => {
+            const timer = setTimeout(resolve, NOTE_GAP_MS);
+            signal.addEventListener("abort", () => { clearTimeout(timer); resolve(); }, { once: true });
+          });
         }
-
-        const loopTimer = setTimeout(() => {
-          if (recapLoopRef.current) {
-            recapTimersRef.current = [];
-            scheduleOnce();
-          }
-        }, loopDuration);
-        recapTimersRef.current.push(loopTimer);
-      };
-
-      scheduleOnce();
+        // Pause between loops
+        if (!signal.aborted) {
+          await new Promise<void>((resolve) => {
+            const timer = setTimeout(resolve, 2000);
+            signal.addEventListener("abort", () => { clearTimeout(timer); resolve(); }, { once: true });
+          });
+        }
+      }
     },
     []
   );
@@ -214,8 +190,9 @@ function DisplayPage() {
       const listener = listenerRef.current ?? new DriftEventListener();
       const events = await listener.fetchAllEvents(sid);
 
+      console.log("[Recap] Got", events.length, "events to replay");
+
       if (events.length === 0) {
-        console.log("[Recap] No events found for session", sid);
         setRecapState("empty");
         setTimeout(() => {
           setRecapState("idle");
@@ -224,16 +201,17 @@ function DisplayPage() {
         return;
       }
 
-      recapLoopRef.current = true;
+      const abort = new AbortController();
+      recapAbortRef.current = abort;
       setRecapState("playing");
       setRecapProgress({ current: 0, total: events.length });
-      scheduleRecapLoop(events);
+      playRecapSequence(events, abort.signal);
     } catch (err) {
       console.error("Recap failed:", err);
       setRecapState("idle");
       startLiveListening(sid);
     }
-  }, [recapState, sessionId, stopRecap, scheduleRecapLoop, startLiveListening]);
+  }, [recapState, sessionId, stopRecap, playRecapSequence, startLiveListening]);
 
   const handleStart = useCallback(async () => {
     if (!canvasRef.current || !sessionId) return;
